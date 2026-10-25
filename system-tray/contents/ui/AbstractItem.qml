@@ -122,19 +122,18 @@ PlasmaCore.ToolTipArea {
         }
     }
 
-    // Win11-styled card background for hidden layout
+    // Win11-styled hover background for hidden layout: invisible until the
+    // pointer is over the icon, so the popup is just a tidy grid of icons.
     Rectangle {
         visible: abstractItem.inHiddenLayout
         anchors.fill: parent
-        radius: 4
-        border.width: 1
-        border.color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.08)
+        radius: 5
         color: {
             if (mouseArea.containsPress)
-                return Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.10);
+                return Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.14);
             if (mouseArea.containsMouse)
-                return Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.06);
-            return Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.04);
+                return Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.08);
+            return Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0);
         }
         Behavior on color { ColorAnimation { duration: Kirigami.Units.shortDuration } }
         z: -1
@@ -142,7 +141,7 @@ PlasmaCore.ToolTipArea {
 
     ColumnLayout {
         anchors.fill: abstractItem
-        anchors.margins: abstractItem.inHiddenLayout ? 10 : 0
+        anchors.margins: 0
         spacing: 0
 
         FocusScope {
@@ -181,18 +180,16 @@ PlasmaCore.ToolTipArea {
 
             property alias container: abstractItem
             property alias inVisibleLayout: abstractItem.inVisibleLayout
-            readonly property int size: abstractItem.inVisibleLayout ? root.itemSize : Kirigami.Units.iconSizes.smallMedium
+            readonly property int size: abstractItem.inVisibleLayout ? root.itemSize : Plasmoid.configuration.iconSize
 
-            Layout.alignment: abstractItem.inHiddenLayout
-                ? Qt.AlignLeft | Qt.AlignTop
-                : Qt.AlignHCenter | Qt.AlignVCenter
+            Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
             implicitWidth: root.vertical && abstractItem.inVisibleLayout ? abstractItem.width : size
             implicitHeight: !root.vertical && abstractItem.inVisibleLayout ? abstractItem.height : size
         }
 
         Item {
             Layout.fillHeight: true
-            visible: abstractItem.inHiddenLayout
+            visible: false
         }
 
         PlasmaComponents3.Label {
@@ -201,7 +198,9 @@ PlasmaCore.ToolTipArea {
             Layout.fillWidth: true
             maximumLineCount: abstractItem.maxTextLines
 
-            visible: abstractItem.inHiddenLayout
+            // Icon-only popup: the name is still read by screen readers
+            // (Accessible.name) and shown as a tooltip on hover.
+            visible: false
 
             horizontalAlignment: Text.AlignLeft
             verticalAlignment: Text.AlignBottom

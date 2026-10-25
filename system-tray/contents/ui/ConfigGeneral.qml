@@ -44,6 +44,9 @@ KCMUtils.ScrollViewKCM {
 
     property bool cfg_scaleIconsToFit
     property int cfg_iconSpacing
+    property int cfg_iconSize
+    property bool cfg_expanderOnLeft
+    property int cfg_popupColumns
     property bool cfg_reverseIconOrder
     property bool cfg_showAllItems
     property list<string> cfg_shownItems: []
@@ -227,7 +230,7 @@ KCMUtils.ScrollViewKCM {
                 Layout.preferredWidth: formLayout.maxComboboxWidth
                 model: [
                     {
-                        "label": i18nc("@item:inlistbox Icon size", "Small"),
+                        "label": i18nc("@item:inlistbox Icon size", "Custom size"),
                         "size": "small"
                     },
                     {
@@ -241,6 +244,30 @@ KCMUtils.ScrollViewKCM {
 
                 onActivated: index => {
                     iconsPage.cfg_scaleIconsToFit = model[currentIndex]["size"] == "scale";
+                }
+            }
+
+            RowLayout {
+                Kirigami.FormData.label: i18nc("@label:slider Size in pixels of the system tray icons", "Icon size:")
+                enabled: !iconsPage.cfg_scaleIconsToFit
+                spacing: Kirigami.Units.smallSpacing
+
+                QQC2.Slider {
+                    id: iconSizeSlider
+
+                    Layout.preferredWidth: Kirigami.Units.gridUnit * 10
+                    from: 12
+                    to: 48
+                    stepSize: 1
+                    snapMode: QQC2.Slider.SnapAlways
+                    value: iconsPage.cfg_iconSize
+                    onMoved: iconsPage.cfg_iconSize = Math.round(value)
+                }
+
+                QQC2.Label {
+                    Layout.minimumWidth: Kirigami.Units.gridUnit * 3
+                    text: i18nc("@info Size in pixels", "%1 px", iconsPage.cfg_iconSize)
+                    textFormat: Text.PlainText
                 }
             }
 
@@ -313,6 +340,25 @@ KCMUtils.ScrollViewKCM {
 
                 currentIndex: iconsPage.cfg_reverseIconOrder ? 1 : 0
                 onActivated: iconsPage.cfg_reverseIconOrder = currentValue;
+            }
+
+            QQC2.CheckBox {
+                id: expanderLeftCheck
+
+                Kirigami.FormData.label: i18nc("@label Hidden-icons arrow button", "Expander arrow:")
+                text: i18nc("@option:check", "Show on the left, before the icons")
+                checked: iconsPage.cfg_expanderOnLeft
+                onToggled: iconsPage.cfg_expanderOnLeft = checked
+            }
+
+            QQC2.SpinBox {
+                id: popupColumnsSpin
+
+                Kirigami.FormData.label: i18nc("@label:spinbox Hidden-icons popup", "Icons per row in popup:")
+                from: 3
+                to: 10
+                value: iconsPage.cfg_popupColumns
+                onValueModified: iconsPage.cfg_popupColumns = value
             }
 
             QQC2.Label {

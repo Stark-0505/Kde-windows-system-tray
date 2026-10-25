@@ -51,6 +51,15 @@
   </tr>
 </table>
 
+### Tray appearance settings
+
+Right-click the tray → **Configure System Tray…** → General:
+
+- **Icon size** — a slider (12–48 px) instead of fixed sizes; it also sets the icon size in the hidden-icons popup. Choose "Scale with Panel height" to have it follow the panel instead.
+- **Expander arrow** — shown on the left, before the icons (Windows style), or between the icons and the system cluster.
+- **Icons per row in popup** — the hidden-icons popup is a compact, icon-only grid that sizes itself to the number of icons (names appear as tooltips).
+- The popup highlight is a flat rounded box on the icon or arrow that opened it, rather than the theme's sliding tab indicator.
+
 <br>
 
 ## 📦 Installation

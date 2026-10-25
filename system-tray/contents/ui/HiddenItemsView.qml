@@ -12,11 +12,23 @@ import QtQuick
 import org.kde.kirigami as Kirigami
 import org.kde.plasma.components as PlasmaComponents3
 import org.kde.plasma.extras as PlasmaExtras
+import org.kde.plasma.plasmoid
 
 PlasmaComponents3.ScrollView {
     id: hiddenTasksView
 
     property alias layout: hiddenTasks
+
+    // Compact, icon-only grid: one square cell per icon, as many columns as
+    // there are icons (up to the user's "icons per row" limit), then wrap.
+    readonly property int cellSize: Plasmoid.configuration.iconSize + Kirigami.Units.smallSpacing * 3
+    readonly property int columnCount: Math.max(1, Math.min(hiddenTasks.itemCount, Plasmoid.configuration.popupColumns))
+    readonly property int rowCount: Math.ceil(hiddenTasks.itemCount / columnCount)
+
+    // The exact size that fits every icon. ExpandedRepresentation sizes the
+    // popup from these, so the popup scales with the number of hidden icons.
+    readonly property int fitWidth: columnCount * cellSize
+    readonly property int fitHeight: rowCount * cellSize
 
     hoverEnabled: true
     background: null
@@ -24,12 +36,15 @@ PlasmaComponents3.ScrollView {
     GridView {
         id: hiddenTasks
 
-        readonly property int columns: 3
+        readonly property int columns: hiddenTasksView.columnCount
 
         readonly property int cellSpacing: Kirigami.Units.smallSpacing
 
-        cellWidth: Math.floor(hiddenTasksView.availableWidth / columns)
-        cellHeight: Math.floor(cellWidth / 1.4)
+        cellWidth: hiddenTasksView.cellSize
+        cellHeight: hiddenTasksView.cellSize
+
+        // Keep the grid centred if the popup ever ends up wider than it.
+        leftMargin: Math.max(0, Math.floor((hiddenTasksView.availableWidth - hiddenTasksView.fitWidth) / 2))
 
         currentIndex: -1
         highlight: PlasmaExtras.Highlight {}

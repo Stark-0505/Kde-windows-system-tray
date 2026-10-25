@@ -22,6 +22,8 @@ ContainmentItem {
 
     readonly property bool vertical: Plasmoid.formFactor === PlasmaCore.Types.Vertical
     readonly property bool reverseLayout: Plasmoid.configuration.reverseIconOrder
+    // Windows-style: the expander arrow leads the tray (before the icons).
+    readonly property bool expanderLeading: Plasmoid.configuration.expanderOnLeft
 
     // The Windows 11–style system cluster: Network, Volume and Battery.
     // This is the single QML source of truth for the three plugin ids —
@@ -231,6 +233,7 @@ ContainmentItem {
         CurrentItemHighLight {
             location: Plasmoid.location
             parent: root
+            hiddenPopupAnchor: expander
         }
 
         DnD.DropArea {
@@ -296,8 +299,11 @@ ContainmentItem {
                 // orientation this ordering is instead handled by
                 // LayoutMirroring (see root.LayoutMirroring above), so both
                 // tasksGrid and systemCluster keep fixed columns 0 and 2.
-                Layout.row: root.vertical ? (root.reverseLayout ? 2 : 0) : 0
-                Layout.column: 0
+                // With expanderLeading the arrow takes the first slot and the
+                // icons the middle one; otherwise the arrow sits between the
+                // icons and the cluster (original layout).
+                Layout.row: root.vertical ? (root.expanderLeading ? 1 : (root.reverseLayout ? 2 : 0)) : 0
+                Layout.column: (!root.vertical && root.expanderLeading) ? 1 : 0
 
                 Layout.alignment: Qt.AlignCenter
 
@@ -308,13 +314,14 @@ ContainmentItem {
                 verticalLayoutDirection: (root.vertical && root.reverseLayout) ? GridView.BottomToTop : GridView.TopToBottom
 
                 // The icon size to display when not using the auto-scaling setting
-                readonly property int smallIconSize: 34
+                readonly property int smallIconSize: Plasmoid.configuration.iconSize
 
                 readonly property bool autoSize: Plasmoid.configuration.scaleIconsToFit
 
                 readonly property int gridThickness: root.vertical ? root.width : root.height
-                // Should change to 2 rows/columns on a 56px panel (in standard DPI)
-                readonly property int rowsOrColumns: autoSize ? 1 : Math.max(1, Math.min(count, Math.floor(gridThickness / (smallIconSize + Kirigami.Units.smallSpacing))))
+                // Always a single row/column: this is a Windows-style tray strip,
+                // and a user-chosen icon size shouldn't make it wrap onto two rows.
+                readonly property int rowsOrColumns: 1
 
                 // Add margins only if the panel is larger than a small icon (to avoid large gaps between tiny icons)
                 readonly property int cellSpacing: Kirigami.Units.smallSpacing * Plasmoid.configuration.iconSpacing
@@ -379,8 +386,8 @@ ContainmentItem {
                 // expander no longer needs to move when reverseLayout
                 // flips, only tasksGrid and systemCluster trade places
                 // around it.
-                Layout.row: root.vertical ? 1 : 0
-                Layout.column: root.vertical ? 0 : 1
+                Layout.row: root.vertical ? (root.expanderLeading ? (root.reverseLayout ? 2 : 0) : 1) : 0
+                Layout.column: root.vertical ? 0 : (root.expanderLeading ? 0 : 1)
 
                 Layout.fillWidth: vertical
                 Layout.fillHeight: !vertical

@@ -34,8 +34,24 @@
       <default>false</default>
     </entry>
     <entry name="scaleIconsToFit" type="bool">
-      <label>Whether to automatically scale System Tray icons to fix the available thickness of the panel. If false, tray icons will be capped at the smallMedium size (22px) and become a two-row/column layout when the panel is thick.</label>
+      <label>Whether to automatically scale System Tray icons to fit the available thickness of the panel. If false, tray icons use the size set by iconSize.</label>
       <default>false</default>
+    </entry>
+    <entry name="iconSize" type="int">
+      <label>Size in pixels of System Tray icons in the panel (when not scaling to fit) and in the hidden-items popup</label>
+      <default>22</default>
+      <min>12</min>
+      <max>48</max>
+    </entry>
+    <entry name="expanderOnLeft" type="bool">
+      <label>Whether the hidden-items expander arrow sits at the leading end of the tray, before the icons (Windows style). If false, it sits between the icons and the system cluster.</label>
+      <default>true</default>
+    </entry>
+    <entry name="popupColumns" type="int">
+      <label>Maximum number of icons per row in the hidden-items popup</label>
+      <default>5</default>
+      <min>3</min>
+      <max>10</max>
     </entry>
     <entry name="iconSpacing" type="int">
       <label>spacing between icons, determined by this number multiplied by Kirigami.Units.smallSpacing</label>
