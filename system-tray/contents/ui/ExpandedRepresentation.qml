@@ -34,6 +34,7 @@ Item {
     // Width: pinned to 360px (or the grid's width in hidden-icons mode)
     Layout.minimumWidth: hiddenGridOnly ? hiddenGridWidth : 360
     Layout.maximumWidth: hiddenGridOnly ? hiddenGridWidth : 360
+    Layout.preferredWidth: hiddenGridOnly ? hiddenGridWidth : -1
 
     // Height: flyouts and the hidden-items-only popup are fixed at
     // gridUnit*24. The Action Panel case is content-driven instead of a
@@ -61,6 +62,7 @@ Item {
         : compactPopup
             ? Kirigami.Units.gridUnit * 24
             : -1 // no cap for action panel
+    Layout.preferredHeight: hiddenGridOnly ? hiddenGridHeight : -1
 
     property alias hiddenLayout: hiddenItemsView.layout
     property alias plasmoidContainer: container

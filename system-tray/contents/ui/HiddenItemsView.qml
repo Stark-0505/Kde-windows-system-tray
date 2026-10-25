@@ -8,6 +8,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Controls as QQC2
 
 import org.kde.kirigami as Kirigami
 import org.kde.plasma.components as PlasmaComponents3
@@ -22,16 +23,28 @@ PlasmaComponents3.ScrollView {
     // Compact, icon-only grid: one square cell per icon, as many columns as
     // there are icons (up to the user's "icons per row" limit), then wrap.
     readonly property int cellSize: Plasmoid.configuration.iconSize + Kirigami.Units.smallSpacing * 3
-    readonly property int columnCount: Math.max(1, Math.min(hiddenTasks.itemCount, Plasmoid.configuration.popupColumns))
+    // Guard against a missing/zero/odd stored value: fall back to 5 per row.
+    readonly property int maxColumns: Plasmoid.configuration.popupColumns >= 3 ? Plasmoid.configuration.popupColumns : 5
+    // Beyond this many rows the grid scrolls (mouse wheel) instead of growing.
+    readonly property int maxRows: 8
+    readonly property int columnCount: Math.max(1, Math.min(hiddenTasks.itemCount, maxColumns))
     readonly property int rowCount: Math.ceil(hiddenTasks.itemCount / columnCount)
 
     // The exact size that fits every icon. ExpandedRepresentation sizes the
     // popup from these, so the popup scales with the number of hidden icons.
     readonly property int fitWidth: columnCount * cellSize
-    readonly property int fitHeight: rowCount * cellSize
+    readonly property int fitHeight: Math.min(rowCount, maxRows) * cellSize
 
     hoverEnabled: true
     background: null
+
+    // Never show a scrollbar: its width would be taken out of the grid's
+    // width, dropping a column, which makes the grid taller, which keeps the
+    // scrollbar showing ("2 icons wide and scrolling"). The popup is sized to
+    // fit every icon, so a bar is never needed; the wheel still scrolls if
+    // there are more than maxRows rows.
+    QQC2.ScrollBar.vertical.policy: QQC2.ScrollBar.AlwaysOff
+    QQC2.ScrollBar.horizontal.policy: QQC2.ScrollBar.AlwaysOff
 
     GridView {
         id: hiddenTasks
@@ -45,6 +58,10 @@ PlasmaComponents3.ScrollView {
 
         // Keep the grid centred if the popup ever ends up wider than it.
         leftMargin: Math.max(0, Math.floor((hiddenTasksView.availableWidth - hiddenTasksView.fitWidth) / 2))
+
+        // Don't let a 1px rounding overflow make the grid wiggle/scroll.
+        boundsBehavior: Flickable.StopAtBounds
+        interactive: contentHeight > height + 2
 
         currentIndex: -1
         highlight: PlasmaExtras.Highlight {}

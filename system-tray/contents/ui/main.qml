@@ -52,6 +52,22 @@ ContainmentItem {
 
     readonly property alias hiddenModel: hiddenModel
 
+    // The item the popup window is positioned against (centred on). Normally
+    // the whole tray; for the hidden-icons popup (and popups of hidden icons)
+    // it is the expander arrow, so the popup opens centred right above it.
+    // Only updated while the popup is open, so it doesn't jump while closing.
+    property Item popupAnchor: root
+    readonly property bool popupFromExpander: popupAnchor === expander
+
+    function updatePopupAnchor() {
+        if (!systemTrayState.expanded) {
+            return; // keep the last anchor while the popup closes
+        }
+        const applet = systemTrayState.activeApplet;
+        const fromHiddenApplet = !!applet && !!applet.parent && applet.parent.inVisibleLayout === false;
+        popupAnchor = ((systemTrayState.hiddenItemsRequested || fromHiddenApplet) && expander.visible) ? expander : root;
+    }
+
     Component.onCompleted: {
         // We need all the plasmoiditems to be there for correct working of shortcuts.
         // Instantiators create the plasmoiditems: ensure this is done after
@@ -234,6 +250,14 @@ ContainmentItem {
             location: Plasmoid.location
             parent: root
             hiddenPopupAnchor: expander
+        }
+
+        Connections {
+            target: systemTrayState
+
+            function onExpandedChanged() { root.updatePopupAnchor(); }
+            function onHiddenItemsRequestedChanged() { root.updatePopupAnchor(); }
+            function onActiveAppletChanged() { root.updatePopupAnchor(); }
         }
 
         DnD.DropArea {
@@ -523,7 +547,7 @@ ContainmentItem {
         PlasmaCore.AppletPopup {
             id: dialog
             objectName: "popupWindow"
-            visualParent: root
+            visualParent: root.popupAnchor
             popupDirection: switch (Plasmoid.location) {
                 case PlasmaCore.Types.TopEdge:
                     return Qt.BottomEdge
@@ -534,7 +558,9 @@ ContainmentItem {
                 default:
                     return Qt.TopEdge
             }
-            margin: (Plasmoid.containmentDisplayHints & PlasmaCore.Types.ContainmentPrefersFloatingApplets) ? Kirigami.Units.largeSpacing : 0
+            // A small gap ("float") above the panel for the arrow's popup, as
+            // well as for floating panels.
+            margin: (root.popupFromExpander || (Plasmoid.containmentDisplayHints & PlasmaCore.Types.ContainmentPrefersFloatingApplets)) ? Kirigami.Units.largeSpacing : 0
 
             Behavior on margin {
                 NumberAnimation {
@@ -548,7 +574,9 @@ ContainmentItem {
 
             floating: Plasmoid.location == PlasmaCore.Desktop
 
-            removeBorderStrategy: Plasmoid.location === PlasmaCore.Types.Floating
+            // Keep a full rounded border (no flat panel-side edge) when the
+            // popup floats above the arrow.
+            removeBorderStrategy: (Plasmoid.location === PlasmaCore.Types.Floating || root.popupFromExpander)
                 ? PlasmaCore.AppletPopup.AtScreenEdges
                 : PlasmaCore.AppletPopup.AtScreenEdges | PlasmaCore.AppletPopup.AtPanelEdges
 
