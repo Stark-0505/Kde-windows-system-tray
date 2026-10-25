@@ -5,14 +5,25 @@
 set -euo pipefail
 
 APP_ID="org.kde.windowsmodern.systemtray"
-SO_PATH="/usr/lib64/qt6/plugins/plasma/applets/${APP_ID}.so"
+
+# Same Qt plugin-dir detection as dev.sh (Fedora: /usr/lib64, Arch/Debian: /usr/lib...)
+if command -v pkg-config &>/dev/null; then
+    QT_PLUGIN_DIR="$(pkg-config --variable=plugindir Qt6Core 2>/dev/null || true)"
+fi
+if [ -z "${QT_PLUGIN_DIR:-}" ]; then
+    if [ -d /usr/lib64/qt6/plugins ]; then QT_PLUGIN_DIR=/usr/lib64/qt6/plugins
+    elif [ -d /usr/lib/qt6/plugins ]; then QT_PLUGIN_DIR=/usr/lib/qt6/plugins
+    else QT_PLUGIN_DIR=/usr/lib64/qt6/plugins; fi
+fi
+SO_PATH="$QT_PLUGIN_DIR/plasma/applets/${APP_ID}.so"
 KPACKAGE_PATH="/usr/share/plasma/plasmoids/${APP_ID}"
 LOCAL_KPACKAGE="$HOME/.local/share/plasma/plasmoids/${APP_ID}"
 LAYOUT_FILE="$HOME/.config/plasma-org.kde.plasma.desktop-appletsrc"
 
-RED="\033[31m"; GREEN="\033[32m"; YELLOW="\033[33m"; RESET="\033[0m"
+RED="\033[31m"; GREEN="\033[32m"; RESET="\033[0m"
+FAILURES=0
 pass() { echo -e "  ${GREEN}✓${RESET} $1"; }
-fail() { echo -e "  ${RED}✗${RESET} $1"; }
+fail() { echo -e "  ${RED}✗${RESET} $1"; FAILURES=$((FAILURES + 1)); }
 
 echo ""
 echo "System Tray — health check"
@@ -50,7 +61,7 @@ fi
 # 4. Symbols
 if [ -f "$SO_PATH" ]; then
     for sym in SYSTEM_TRAY DBUSMENUQT; do
-        if [ -n "$(nm -D "$SO_PATH" 2>/dev/null | grep "_Z.*${sym}v")" ]; then
+        if nm -D "$SO_PATH" 2>/dev/null | grep -q "_Z.*${sym}v"; then
             pass "Symbol ${sym} defined"
         else
             fail "Symbol ${sym} UNDEFINED — .so won't load"
@@ -67,4 +78,8 @@ else
 fi
 
 echo ""
-echo "To fix issues: cd system-tray && ./dev.sh"
+if [ "$FAILURES" -gt 0 ]; then
+    echo "${FAILURES} check(s) failed. To fix: cd system-tray && ./dev.sh"
+    exit 1
+fi
+echo "All checks passed."

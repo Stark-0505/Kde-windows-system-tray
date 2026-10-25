@@ -50,7 +50,8 @@ sleep 1
 
 # ── Fix layout if corrupted ───────────────────────────────────────
 if grep -q "plugin=metadata" "$LAYOUT_FILE" 2>/dev/null; then
-    info "Fixing corrupted plugin=metadata in layout..."
+    info "Fixing corrupted plugin=metadata in layout (backup: ${LAYOUT_FILE}.bak)..."
+    cp -a "$LAYOUT_FILE" "${LAYOUT_FILE}.bak"
     sed -i "/\[Containments\]\[.*\]\[Applets\]/,/\[/s/^plugin=metadata$/plugin=${APP_ID}/" "$LAYOUT_FILE"
 fi
 

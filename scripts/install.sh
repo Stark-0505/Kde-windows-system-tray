@@ -10,13 +10,24 @@
 #  Usage:
 #      curl -fsSL https://github.com/RaceConditionWinner/Kde-windows-system-tray/releases/latest/download/install.sh | bash
 #
+#  Optional environment variables:
+#      WM_REPO=owner/repo   GitHub repo to download release assets from
+#      WM_VERSION=v1.2.3    Release tag to install (default: latest)
+#
 #  Safe to run more than once: repeat runs verify/repair the existing
 #  installation instead of duplicating anything.
 # ──────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-REPO="RaceConditionWinner/Kde-windows-system-tray"
-RELEASE_BASE="https://github.com/${REPO}/releases/latest/download"
+REPO="${WM_REPO:-RaceConditionWinner/Kde-windows-system-tray}"
+WM_VERSION="${WM_VERSION:-latest}"
+[[ "$REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || { echo "Invalid WM_REPO: $REPO" >&2; exit 1; }
+[[ "$WM_VERSION" =~ ^[A-Za-z0-9._-]+$ ]]            || { echo "Invalid WM_VERSION: $WM_VERSION" >&2; exit 1; }
+if [ "$WM_VERSION" = "latest" ]; then
+    RELEASE_BASE="https://github.com/${REPO}/releases/latest/download"
+else
+    RELEASE_BASE="https://github.com/${REPO}/releases/download/${WM_VERSION}"
+fi
 APP_ID="org.kde.windowsmodern.systemtray"
 THEME_NAME="WindowsModern-WhiteSurApps"
 STOCK_PLUGIN="org.kde.plasma.systemtray"
@@ -110,7 +121,7 @@ mkdir -p "$STATE_DIR"
 
 # ── Download + verify ──────────────────────────────────────────────────
 TMP_DIR="$(mktemp -d)"
-info "Downloading release artifacts..."
+info "Downloading release artifacts from github.com/${REPO} (${WM_VERSION})..."
 curl -fsSL "$RELEASE_BASE/$SUMS_ASSET"  -o "$TMP_DIR/$SUMS_ASSET"  || die "Failed to download $SUMS_ASSET"
 curl -fsSL "$RELEASE_BASE/$SO_ASSET"    -o "$TMP_DIR/$SO_ASSET"    || die "Failed to download $SO_ASSET"
 curl -fsSL "$RELEASE_BASE/$THEME_ASSET" -o "$TMP_DIR/$THEME_ASSET" || die "Failed to download $THEME_ASSET"
@@ -135,9 +146,20 @@ if [ -z "${PREVIOUS_ICON_THEME:-}" ] && [ -n "$CURRENT_THEME" ] && [ "$CURRENT_T
 fi
 
 info "Installing icon theme to ${ICON_DEST}..."
-rm -rf "$ICON_DEST"
+# Validate the archive BEFORE touching the existing theme: every entry must live
+# under the theme directory, with no '..' path components.
+THEME_LISTING="$(tar -tzf "$TMP_DIR/$THEME_ASSET")" || die "Could not read ${THEME_ASSET}."
+if grep -Eqv "^(\./)?${THEME_NAME}(/|\$)" <<<"$THEME_LISTING" \
+   || grep -Eq '(^|/)\.\.(/|$)' <<<"$THEME_LISTING"; then
+    die "${THEME_ASSET} contains unexpected paths. Aborting — nothing was installed."
+fi
+STAGE_DIR="$TMP_DIR/icons-stage"
+mkdir -p "$STAGE_DIR"
+tar -xzf "$TMP_DIR/$THEME_ASSET" -C "$STAGE_DIR" --no-same-owner
+[ -f "$STAGE_DIR/$THEME_NAME/index.theme" ] || die "${THEME_ASSET} has no ${THEME_NAME}/index.theme. Aborting."
 mkdir -p "$HOME/.local/share/icons"
-tar -xzf "$TMP_DIR/$THEME_ASSET" -C "$HOME/.local/share/icons"
+rm -rf "$ICON_DEST"
+mv "$STAGE_DIR/$THEME_NAME" "$ICON_DEST"
 
 if command -v plasma-changeicons &>/dev/null; then
     plasma-changeicons "$THEME_NAME" || warn "plasma-changeicons failed; theme installed but may need manual activation."
@@ -152,16 +174,26 @@ info "Icon theme installed and activated."
 
 # ── Plugin: install compiled .so, remove conflicting KPackage ─────────
 info "Installing plugin (requires your password)..."
-TMP_INSTALL="$(mktemp "$TMP_DIR/install-XXXXXX.sh")"
-cat > "$TMP_INSTALL" <<EOF
-#!/bin/bash
-set -e
-mkdir -p "$PLUGIN_DST_DIR"
-cp "$TMP_DIR/$SO_ASSET" "$PLUGIN_DST"
-rm -rf "$KPACKAGE_DIR"
-EOF
-chmod +x "$TMP_INSTALL"
-pkexec bash "$TMP_INSTALL" || die "Plugin installation failed (pkexec)."
+EXPECTED_SO_SHA="$(awk -v f="$SO_ASSET" '($2==f || $2=="*"f) {print $1; exit}' "$TMP_DIR/$SUMS_ASSET")"
+[[ "$EXPECTED_SO_SHA" =~ ^[0-9a-f]{64}$ ]] || die "Could not read a valid SHA-256 for ${SO_ASSET} from ${SUMS_ASSET}."
+
+# The root step copies the .so into a root-owned temp file and re-verifies the
+# hash THERE, so nothing running as your user can swap the file between the
+# check and the install (the download dir is writable by you).
+PRIV_SCRIPT=$(cat <<'EOS'
+set -euo pipefail
+src="${1:?}"; dst_dir="${2:?}"; dst="${3:?}"; kpkg="${4:?}"; sha="${5:?}"
+staged="$(mktemp)"
+trap 'rm -f -- "$staged"' EXIT
+cp -- "$src" "$staged"
+echo "$sha  $staged" | sha256sum -c --quiet - || { echo "Checksum mismatch — refusing to install." >&2; exit 1; }
+install -d -m 0755 "$dst_dir"
+install -m 0755 "$staged" "$dst"
+rm -rf -- "$kpkg"
+EOS
+)
+pkexec bash -c "$PRIV_SCRIPT" _ "$TMP_DIR/$SO_ASSET" "$PLUGIN_DST_DIR" "$PLUGIN_DST" "$KPACKAGE_DIR" "$EXPECTED_SO_SHA" \
+    || die "Plugin installation failed (pkexec or checksum)."
 
 # Prune stale local copies that would otherwise shadow the system plugin
 rm -rf "$HOME/.local/share/plasma/plasmoids/${APP_ID}" 2>/dev/null || true
@@ -214,6 +246,7 @@ if (!knownWidgetTypes.includes(newId)) {
         print("ALREADY_PRESENT");
     } else {
         var swapped = 0;
+        var failed = 0;
         for (var i = 0; i < allPanels.length; i++) {
             var panel = allPanels[i];
             var trays = panel.widgets(stockId);
@@ -221,11 +254,22 @@ if (!knownWidgetTypes.includes(newId)) {
                 var oldIndex = trays[j].index;
                 trays[j].remove();
                 var w = panel.addWidget(newId);
-                w.index = oldIndex;
-                swapped++;
+                if (w) {
+                    w.index = oldIndex;
+                    swapped++;
+                } else {
+                    // Don't leave the panel without a tray: put the stock one back.
+                    var r = panel.addWidget(stockId);
+                    if (r) { r.index = oldIndex; }
+                    failed++;
+                }
             }
         }
-        print(swapped > 0 ? "SWAPPED:" + swapped : "NOT_FOUND");
+        if (failed > 0) {
+            print("ADD_FAILED:" + failed);
+        } else {
+            print(swapped > 0 ? "SWAPPED:" + swapped : "NOT_FOUND");
+        }
     }
 }
 JS
@@ -239,6 +283,10 @@ case "$PANEL_RESULT" in
     SWAPPED:*)
         PANEL_STATUS="migrated"
         info "Replaced the stock System Tray with the Windows Modern one (same panel position)." ;;
+    ADD_FAILED:*)
+        PANEL_STATUS="add-failed"
+        warn "Plasma refused to add the Windows Modern tray; the stock System Tray was put back."
+        warn "Add \"System Tray (Windows Modern)\" manually: right-click panel → Add or Manage Widgets…" ;;
     NOT_FOUND)
         PANEL_STATUS="not-found"
         warn "Could not find the stock System Tray on any panel."

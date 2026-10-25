@@ -106,6 +106,18 @@ The manual path builds from source and never touches your panel layout automatic
 
 <br>
 
+## 🔒 Security notes
+
+The one-command installer downloads a **prebuilt binary** and installs it as root (via `pkexec`) into the system Qt plugin directory, where it loads into `plasmashell`. Know what you're trusting:
+
+- The `SHA256SUMS` file is served from the same release as the binary, so it catches corruption, **not** a malicious publisher. You are trusting whoever controls the release.
+- The installer prints which repo and version it is pulling from. Pin them if you want repeatable installs:
+  ```
+  curl -fsSL <install.sh URL> | WM_REPO=owner/repo WM_VERSION=v1.0.0 bash
+  ```
+- Prefer to audit first? Download `install.sh`, read it, then run it. Or skip prebuilt binaries entirely and use [manual installation](#️-manual-installation), which builds from source.
+- The root step re-verifies the binary's hash from a root-owned copy, so a local process can't swap the file between the check and the install.
+
 ## ✅ Requirements
 
 - KDE Plasma 6
