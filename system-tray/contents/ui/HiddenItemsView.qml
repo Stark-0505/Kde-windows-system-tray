@@ -56,9 +56,6 @@ PlasmaComponents3.ScrollView {
         cellWidth: hiddenTasksView.cellSize
         cellHeight: hiddenTasksView.cellSize
 
-        // Keep the grid centred if the popup ever ends up wider than it.
-        leftMargin: Math.max(0, Math.floor((hiddenTasksView.availableWidth - hiddenTasksView.fitWidth) / 2))
-
         // Don't let a 1px rounding overflow make the grid wiggle/scroll.
         boundsBehavior: Flickable.StopAtBounds
         interactive: contentHeight > height + 2

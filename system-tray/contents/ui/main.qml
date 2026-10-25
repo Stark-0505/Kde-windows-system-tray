@@ -57,7 +57,6 @@ ContainmentItem {
     // it is the expander arrow, so the popup opens centred right above it.
     // Only updated while the popup is open, so it doesn't jump while closing.
     property Item popupAnchor: root
-    readonly property bool popupFromExpander: popupAnchor === expander
 
     function updatePopupAnchor() {
         if (!systemTrayState.expanded) {
@@ -558,9 +557,9 @@ ContainmentItem {
                 default:
                     return Qt.TopEdge
             }
-            // A small gap ("float") above the panel for the arrow's popup, as
-            // well as for floating panels.
-            margin: (root.popupFromExpander || (Plasmoid.containmentDisplayHints & PlasmaCore.Types.ContainmentPrefersFloatingApplets)) ? Kirigami.Units.largeSpacing : 0
+            // Every tray popup (Action Panel, hidden icons, applet popups)
+            // floats a small gap above the panel instead of touching it.
+            margin: Kirigami.Units.largeSpacing
 
             Behavior on margin {
                 NumberAnimation {
@@ -574,11 +573,9 @@ ContainmentItem {
 
             floating: Plasmoid.location == PlasmaCore.Desktop
 
-            // Keep a full rounded border (no flat panel-side edge) when the
-            // popup floats above the arrow.
-            removeBorderStrategy: (Plasmoid.location === PlasmaCore.Types.Floating || root.popupFromExpander)
-                ? PlasmaCore.AppletPopup.AtScreenEdges
-                : PlasmaCore.AppletPopup.AtScreenEdges | PlasmaCore.AppletPopup.AtPanelEdges
+            // Because the popup floats, keep its full rounded border: only
+            // drop the border where it actually touches a screen edge.
+            removeBorderStrategy: PlasmaCore.AppletPopup.AtScreenEdges
 
 
             hideOnWindowDeactivate: !Plasmoid.configuration.pin
