@@ -60,8 +60,11 @@ fi
 
 # 4. Symbols
 if [ -f "$SO_PATH" ]; then
+    # Capture first, then grep: `nm | grep -q` under pipefail gives false
+    # negatives (grep exits early, nm gets SIGPIPE, pipeline reports failure).
+    SO_SYMBOLS="$(nm -D "$SO_PATH" 2>/dev/null || true)"
     for sym in SYSTEM_TRAY DBUSMENUQT; do
-        if nm -D "$SO_PATH" 2>/dev/null | grep -q "_Z.*${sym}v"; then
+        if grep -q "_Z.*${sym}v" <<<"$SO_SYMBOLS"; then
             pass "Symbol ${sym} defined"
         else
             fail "Symbol ${sym} UNDEFINED — .so won't load"
