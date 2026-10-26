@@ -69,6 +69,44 @@ ContainmentItem {
         popupAnchor = ((systemTrayState.hiddenItemsRequested || fromHiddenApplet) && expander.visible) ? expander : root;
     }
 
+    // ───────────── Switching between popups ─────────────
+    // Pressing a control on the panel takes focus from the popup, and
+    // hideOnWindowDeactivate would then close it just before the click
+    // switches it to the new content, so clicking one popup's button while
+    // another is open made it vanish (or close and re-open). While the pointer
+    // is over a control that manages the popup (the arrow, or a plasmoid icon
+    // including the system group) a focus loss must not close it; the click
+    // handler switches it instead, with a transition.
+    property int popupControlHovers: 0
+
+    function popupControlHoverChanged(hovered) {
+        popupControlHovers = Math.max(0, popupControlHovers + (hovered ? 1 : -1));
+        if (popupControlHovers === 0) {
+            inactivePopupGuard.restart();
+        }
+    }
+
+    // After switching, give the popup focus again so clicking elsewhere closes
+    // it as usual.
+    function refocusPopup() {
+        if (systemTrayState.expanded) {
+            Qt.callLater(() => dialog.requestActivate());
+        }
+    }
+
+    // Safety net: if the pointer has left the controls and the popup still
+    // doesn't have focus (so nothing would ever close it), close it.
+    Timer {
+        id: inactivePopupGuard
+        interval: 250
+        onTriggered: {
+            if (systemTrayState.expanded && dialog.visible && !dialog.active
+                    && !Plasmoid.configuration.pin && root.popupControlHovers === 0) {
+                systemTrayState.expanded = false;
+            }
+        }
+    }
+
     // ───────────── Drag & drop: reorder, pin and unpin icons ─────────────
     // An icon is dragged with the DragHandler in AbstractItem, which reports
     // the pointer in GLOBAL (screen) coordinates. That lets this one
@@ -452,8 +490,8 @@ ContainmentItem {
             target: systemTrayState
 
             function onExpandedChanged() { root.updatePopupAnchor(); }
-            function onHiddenItemsRequestedChanged() { root.updatePopupAnchor(); }
-            function onActiveAppletChanged() { root.updatePopupAnchor(); }
+            function onHiddenItemsRequestedChanged() { root.updatePopupAnchor(); root.refocusPopup(); }
+            function onActiveAppletChanged() { root.updatePopupAnchor(); root.refocusPopup(); }
         }
 
         // Drop line shown between icons while dragging (white on dark themes).
@@ -646,6 +684,10 @@ ContainmentItem {
                 // there is always somewhere to drop an icon to unpin it.
                 visible: root.hiddenLayout.itemCount > 0 || (root.dragActive && !Plasmoid.configuration.showAllItems)
 
+                HoverHandler {
+                    onHoveredChanged: root.popupControlHoverChanged(hovered)
+                }
+
                 // Drop target highlight: dropping on the arrow pins/unpins.
                 Rectangle {
                     anchors.fill: parent
@@ -817,7 +859,7 @@ ContainmentItem {
             removeBorderStrategy: PlasmaCore.AppletPopup.AtScreenEdges
 
 
-            hideOnWindowDeactivate: !Plasmoid.configuration.pin
+            hideOnWindowDeactivate: !Plasmoid.configuration.pin && root.popupControlHovers === 0
             visible: systemTrayState.expanded
             appletInterface: root
 

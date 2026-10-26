@@ -128,6 +128,20 @@ PlasmaCore.ToolTipArea {
         }
     }
 
+    // Plasmoid icons (including the system group) manage the shared popup:
+    // while the pointer is over one, losing focus must not close the popup, so
+    // clicking it can switch the popup to this icon instead of closing it.
+    HoverHandler {
+        id: popupControlHover
+        enabled: abstractItem.model.itemType === "Plasmoid"
+        onHoveredChanged: root.popupControlHoverChanged(hovered)
+    }
+    Component.onDestruction: {
+        if (popupControlHover.hovered) {
+            root.popupControlHoverChanged(false);
+        }
+    }
+
     // A plain click still works as before: this only activates once the
     // pointer has moved past the drag threshold, and then takes the gesture
     // over from the MouseArea above (and from any applet content below it).

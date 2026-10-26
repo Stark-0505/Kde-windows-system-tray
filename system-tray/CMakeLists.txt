@@ -290,6 +290,7 @@ ecm_target_qml_sources(org.kde.windowsmodern.systemtray
         "${CMAKE_CURRENT_SOURCE_DIR}/contents/ui/config.qml"
         "${CMAKE_CURRENT_SOURCE_DIR}/contents/ui/CurrentItemHighLight.qml"
         "${CMAKE_CURRENT_SOURCE_DIR}/contents/ui/ExpanderArrow.qml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/contents/ui/PopupTransition.qml"
         "${CMAKE_CURRENT_SOURCE_DIR}/contents/ui/ExpandedRepresentation.qml"
         "${CMAKE_CURRENT_SOURCE_DIR}/contents/ui/HiddenItemsView.qml"
         "${CMAKE_CURRENT_SOURCE_DIR}/contents/ui/ItemLoader.qml"
