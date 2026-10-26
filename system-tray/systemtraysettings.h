@@ -34,6 +34,11 @@ public:
     const QStringList shownItems() const;
     const QStringList hiddenItems() const;
 
+    // User-defined icon order. When isAutoSort() is false the tray follows
+    // itemOrder() (ids not listed go after the listed ones, in automatic order).
+    bool isAutoSort() const;
+    const QStringList itemOrder() const;
+
     void cleanupPlugin(const QString &pluginId);
 
 Q_SIGNALS:

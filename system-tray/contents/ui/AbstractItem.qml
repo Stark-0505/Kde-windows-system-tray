@@ -33,6 +33,12 @@ PlasmaCore.ToolTipArea {
     required textFormat
 
     readonly property alias iconContainer: iconContainer
+
+    // Icons can be dragged to reorder them and to pin/unpin them (the drag
+    // controller lives in main.qml). The system cluster is fixed in place.
+    readonly property bool draggable: !exclusivePrimaryInput && (inVisibleLayout || inHiddenLayout)
+    // Dim the icon that is being dragged; a snapshot follows the pointer.
+    opacity: dragHandler.active ? 0.4 : 1
     readonly property bool inHiddenLayout: effectiveStatus === PlasmaCore.Types.PassiveStatus
     readonly property bool inVisibleLayout: effectiveStatus === PlasmaCore.Types.ActiveStatus
 
@@ -120,6 +126,33 @@ PlasmaCore.ToolTipArea {
             //for the parent scrollview this icon is in.
             wheel.accepted = false;
         }
+    }
+
+    // A plain click still works as before: this only activates once the
+    // pointer has moved past the drag threshold, and then takes the gesture
+    // over from the MouseArea above (and from any applet content below it).
+    DragHandler {
+        id: dragHandler
+        enabled: abstractItem.draggable
+        target: null // nothing moves: the controller shows a drop line instead
+        acceptedButtons: Qt.LeftButton
+
+        function report() {
+            const sp = centroid.scenePosition;
+            const local = abstractItem.mapFromItem(null, sp.x, sp.y);
+            const g = abstractItem.mapToGlobal(local.x, local.y);
+            root.updateDrag(g.x, g.y);
+        }
+
+        onActiveChanged: {
+            if (active) {
+                root.beginDrag(abstractItem, abstractItem.inHiddenLayout);
+                report();
+            } else {
+                root.endDrag();
+            }
+        }
+        onCentroidChanged: if (active) report()
     }
 
     // Win11-styled hover background for hidden layout: invisible until the

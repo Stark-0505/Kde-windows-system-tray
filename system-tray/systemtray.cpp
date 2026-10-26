@@ -293,6 +293,7 @@ QAbstractItemModel *SystemTray::sortedSystemTrayModel()
     if (!m_sortedSystemTrayModel) {
         m_sortedSystemTrayModel = new SortedSystemTrayModel(SortedSystemTrayModel::SortingType::SystemTray, this);
         m_sortedSystemTrayModel->setSourceModel(systemTrayModel());
+        m_sortedSystemTrayModel->setSettings(m_settings);
     }
     return m_sortedSystemTrayModel;
 }

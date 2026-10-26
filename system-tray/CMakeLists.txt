@@ -322,6 +322,7 @@ ecm_target_qml_sources(org.kde.windowsmodern.systemtray
     SOURCES
         "${CMAKE_CURRENT_SOURCE_DIR}/contents/ui/js/funcs.js"
         "${CMAKE_CURRENT_SOURCE_DIR}/contents/ui/js/colorType.js"
+        "${CMAKE_CURRENT_SOURCE_DIR}/contents/ui/js/trayorder.js"
 )
 
 ecm_target_qml_sources(org.kde.windowsmodern.systemtray

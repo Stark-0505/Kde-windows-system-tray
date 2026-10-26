@@ -17,6 +17,8 @@ import org.kde.ksvg as KSvg
 import org.kde.plasma.core as PlasmaCore
 import org.kde.plasma.plasmoid
 
+import "js/trayorder.js" as TrayOrder
+
 ContainmentItem {
     id: root
 
@@ -65,6 +67,201 @@ ContainmentItem {
         const applet = systemTrayState.activeApplet;
         const fromHiddenApplet = !!applet && !!applet.parent && applet.parent.inVisibleLayout === false;
         popupAnchor = ((systemTrayState.hiddenItemsRequested || fromHiddenApplet) && expander.visible) ? expander : root;
+    }
+
+    // ───────────── Drag & drop: reorder, pin and unpin icons ─────────────
+    // An icon is dragged with the DragHandler in AbstractItem, which reports
+    // the pointer in GLOBAL (screen) coordinates. That lets this one
+    // controller hit-test both the panel and the hidden-icons popup, which are
+    // separate windows. See js/trayorder.js for the (unit-tested) list logic.
+    readonly property bool manualOrder: !Plasmoid.configuration.autoSort
+    property bool dragActive: false
+    property string dragItemId: ""
+    property bool dragFromHidden: false      // the drag started in the popup
+    property string dropZone: "none"         // "panel" | "popup" | "arrow" | "none"
+    property int dropSlot: -1                // insertion slot within the drop zone (manual order only)
+    property rect panelIndicator: Qt.rect(0, 0, 0, 0)
+    property real dragGlobalX: 0
+    property real dragGlobalY: 0
+    property url dragGhostUrl: ""
+    property size dragGhostSize: Qt.size(0, 0)
+
+    // Ids of the icons currently in a zone, in display order, read straight
+    // from the (sorted) tray model so it works even while the popup is closed.
+    function trayIds(zone) {
+        const m = Plasmoid.systemTrayModel;
+        const idRole = nonClusterModel.filterRole;      // role of "itemId"
+        const statusRole = hiddenModel.filterRole;      // role of "effectiveStatus"
+        const wanted = zone === "panel" ? PlasmaCore.Types.ActiveStatus : PlasmaCore.Types.PassiveStatus;
+        const ids = [];
+        for (let i = 0; i < m.rowCount(); ++i) {
+            const idx = m.index(i, 0);
+            if (m.data(idx, statusRole) !== wanted) {
+                continue;
+            }
+            const id = m.data(idx, idRole);
+            if (zone === "panel" && systemClusterPluginIds.indexOf(id) >= 0) {
+                continue;
+            }
+            ids.push(id);
+        }
+        return ids;
+    }
+
+    function pointInside(item, gx, gy) {
+        const p = item.mapFromGlobal(gx, gy);
+        return p.x >= 0 && p.y >= 0 && p.x < item.width && p.y < item.height;
+    }
+
+    // True when model order runs against the +x / +y axis of tasksGrid
+    // (mirrored horizontal layout, or bottom-to-top vertical layout).
+    function panelFlipped() {
+        return root.vertical ? tasksGrid.verticalLayoutDirection === GridView.BottomToTop
+                             : tasksGrid.effectiveLayoutDirection === Qt.RightToLeft;
+    }
+
+    // Insertion slot (0..count) in the panel's icon row for a global point.
+    function panelSlotAt(gx, gy) {
+        const n = tasksGrid.count;
+        const p = tasksGrid.mapFromGlobal(gx, gy);
+        const flip = panelFlipped();
+        const centers = [];
+        for (let i = 0; i < n; ++i) {
+            const d = tasksGrid.itemAtIndex(i);
+            if (!d) {
+                return -1;
+            }
+            // Delegate x/y are CONTENT coordinates; in a mirrored (or
+            // bottom-to-top) grid contentX/Y is non-zero, so convert to the
+            // grid's own coordinates, which is what the pointer position uses.
+            const c = root.vertical ? (d.y - tasksGrid.contentY) + d.height / 2
+                                    : (d.x - tasksGrid.contentX) + d.width / 2;
+            centers.push(flip ? -c : c);
+        }
+        const pos = root.vertical ? p.y : p.x;
+        return TrayOrder.slotForPosition(centers, flip ? -pos : pos);
+    }
+
+    // The drop line for a panel slot, in root coordinates.
+    function panelIndicatorFor(slot) {
+        const n = tasksGrid.count;
+        if (n === 0 || slot < 0) {
+            return Qt.rect(0, 0, 0, 0);
+        }
+        const atEnd = slot >= n;
+        const d = tasksGrid.itemAtIndex(atEnd ? n - 1 : slot);
+        if (!d) {
+            return Qt.rect(0, 0, 0, 0);
+        }
+        // The edge of icon d that faces the insertion point.
+        const leading = (!atEnd) !== panelFlipped();
+        const origin = tasksGrid.mapToItem(root, 0, 0);
+        const t = 2;
+        const inset = Kirigami.Units.smallSpacing;
+        if (root.vertical) {
+            const top = d.y - tasksGrid.contentY;
+            const edge = leading ? top : top + d.height;
+            return Qt.rect(inset, origin.y + edge - t / 2, root.width - inset * 2, t);
+        }
+        const left = d.x - tasksGrid.contentX;
+        const edge = leading ? left : left + d.width;
+        return Qt.rect(origin.x + edge - t / 2, inset, t, root.height - inset * 2);
+    }
+
+    function beginDrag(item, fromHidden) {
+        dragItemId = item.itemId;
+        dragFromHidden = fromHidden;
+        dropZone = "none";
+        dropSlot = -1;
+        dragGhostUrl = "";
+        dragGhostSize = Qt.size(item.iconContainer.width, item.iconContainer.height);
+        dragActive = true;
+        // A snapshot of the icon follows the pointer (the real one is dimmed).
+        item.iconContainer.grabToImage(result => {
+            if (root.dragActive) {
+                root.dragGhostUrl = result.url;
+            }
+        });
+    }
+
+    function updateDrag(gx, gy) {
+        if (!dragActive) {
+            return;
+        }
+        dragGlobalX = gx;
+        dragGlobalY = gy;
+        const fromZone = dragFromHidden ? "popup" : "panel";
+        let zone = "none";
+        let slot = -1;
+        if (systemTrayState.hiddenItemsShowing && hiddenLayout.visible && pointInside(hiddenLayout, gx, gy)) {
+            zone = "popup";
+            if (manualOrder) {
+                const p = hiddenLayout.mapFromGlobal(gx, gy);
+                slot = expandedRepresentation.hiddenGrid.slotAt(p.x, p.y);
+            }
+        } else if (expander.visible && pointInside(expander, gx, gy)) {
+            zone = "arrow";
+        } else if (pointInside(root, gx, gy) && !pointInside(systemClusterContainer, gx, gy)) {
+            zone = "panel";
+            if (manualOrder) {
+                slot = panelSlotAt(gx, gy);
+            }
+        }
+        // Moving between panel and popup edits the pinned lists, which do
+        // nothing while "show all items" is on.
+        const crossing = zone === "arrow" || (zone !== "none" && zone !== fromZone);
+        if (crossing && Plasmoid.configuration.showAllItems) {
+            zone = "none";
+            slot = -1;
+        }
+        dropZone = zone;
+        dropSlot = slot;
+        panelIndicator = (zone === "panel" && slot >= 0) ? panelIndicatorFor(slot) : Qt.rect(0, 0, 0, 0);
+    }
+
+    function endDrag() {
+        if (!dragActive) {
+            return;
+        }
+        const id = dragItemId;
+        const fromZone = dragFromHidden ? "popup" : "panel";
+        const zone = dropZone;
+        const slot = dropSlot;
+        dragActive = false;
+        dropZone = "none";
+        dropSlot = -1;
+        dragGhostUrl = "";
+        panelIndicator = Qt.rect(0, 0, 0, 0);
+        // Let the pointer handler finish before the model reshuffles under it.
+        Qt.callLater(() => root.commitDrop(id, fromZone, zone, slot));
+    }
+
+    function commitDrop(id, fromZone, zone, slot) {
+        if (zone === "none" || !id) {
+            return;
+        }
+        // Dropping on the arrow means "the other zone": unpin from the panel,
+        // or pin from the popup.
+        const toZone = zone === "arrow" ? (fromZone === "panel" ? "popup" : "panel") : zone;
+        const crossing = toZone !== fromZone;
+        if (!crossing && (!manualOrder || slot < 0)) {
+            return; // plain reorder, but automatic sorting is on
+        }
+        if (manualOrder) {
+            const oldOrder = Plasmoid.configuration.itemOrder;
+            const order = TrayOrder.newOrder(trayIds("panel"), trayIds("popup"), id, fromZone, toZone,
+                                             zone === "arrow" ? -1 : slot, oldOrder);
+            if (!TrayOrder.sameList(order, oldOrder)) {
+                Plasmoid.configuration.itemOrder = order;
+            }
+        }
+        if (crossing) {
+            const lists = toZone === "panel"
+                ? TrayOrder.pin(Plasmoid.configuration.shownItems, Plasmoid.configuration.hiddenItems, id)
+                : TrayOrder.unpin(Plasmoid.configuration.shownItems, Plasmoid.configuration.hiddenItems, id);
+            Plasmoid.configuration.shownItems = lists.shown;
+            Plasmoid.configuration.hiddenItems = lists.hidden;
+        }
     }
 
     Component.onCompleted: {
@@ -259,6 +456,35 @@ ContainmentItem {
             function onActiveAppletChanged() { root.updatePopupAnchor(); }
         }
 
+        // Drop line shown between icons while dragging (white on dark themes).
+        Rectangle {
+            z: 900
+            enabled: false
+            visible: root.dragActive && root.dropZone === "panel" && root.dropSlot >= 0
+            x: root.panelIndicator.x
+            y: root.panelIndicator.y
+            width: root.panelIndicator.width
+            height: root.panelIndicator.height
+            radius: 1
+            color: Kirigami.Theme.textColor
+        }
+
+        // The dragged icon, following the pointer.
+        Image {
+            id: dragGhost
+            z: 1000
+            enabled: false
+            visible: root.dragActive && source != ""
+            source: root.dragGhostUrl
+            width: root.dragGhostSize.width
+            height: root.dragGhostSize.height
+            opacity: 0.85
+            x: visible ? mapFromGlobalX() : 0
+            y: visible ? mapFromGlobalY() : 0
+            function mapFromGlobalX() { return parent.mapFromGlobal(root.dragGlobalX, root.dragGlobalY).x - width / 2; }
+            function mapFromGlobalY() { return parent.mapFromGlobal(root.dragGlobalX, root.dragGlobalY).y - height / 2; }
+        }
+
         DnD.DropArea {
             anchors.fill: parent
 
@@ -416,7 +642,20 @@ ContainmentItem {
                 Layout.fillHeight: !vertical
                 Layout.alignment: vertical ? Qt.AlignVCenter : Qt.AlignHCenter
                 iconSize: tasksGrid.itemSize
-                visible: root.hiddenLayout.itemCount > 0
+                // While an icon is being dragged the arrow is always shown, so
+                // there is always somewhere to drop an icon to unpin it.
+                visible: root.hiddenLayout.itemCount > 0 || (root.dragActive && !Plasmoid.configuration.showAllItems)
+
+                // Drop target highlight: dropping on the arrow pins/unpins.
+                Rectangle {
+                    anchors.fill: parent
+                    anchors.margins: Math.round(Kirigami.Units.smallSpacing / 2)
+                    z: -1
+                    radius: 5
+                    visible: root.dragActive && root.dropZone === "arrow"
+                    color: Kirigami.Theme.textColor
+                    opacity: 0.2
+                }
             }
 
             // The Windows 11–style system cluster: Network, Volume and

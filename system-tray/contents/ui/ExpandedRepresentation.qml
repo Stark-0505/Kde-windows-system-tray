@@ -65,6 +65,21 @@ Item {
     Layout.preferredHeight: hiddenGridOnly ? hiddenGridHeight : -1
 
     property alias hiddenLayout: hiddenItemsView.layout
+    // The grid itself, for drag & drop hit-testing (see main.qml).
+    readonly property alias hiddenGrid: hiddenItemsView
+
+    // The dragged icon, following the pointer while it is over this popup.
+    Image {
+        z: 1000
+        enabled: false
+        visible: root.dragActive && source != ""
+        source: root.dragGhostUrl
+        width: root.dragGhostSize.width
+        height: root.dragGhostSize.height
+        opacity: 0.85
+        x: visible ? parent.mapFromGlobal(root.dragGlobalX, root.dragGlobalY).x - width / 2 : 0
+        y: visible ? parent.mapFromGlobal(root.dragGlobalX, root.dragGlobalY).y - height / 2 : 0
+    }
     property alias plasmoidContainer: container
 
     readonly property bool themedActive: container.themedActive

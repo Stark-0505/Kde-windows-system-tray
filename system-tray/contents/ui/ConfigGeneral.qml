@@ -46,6 +46,7 @@ KCMUtils.ScrollViewKCM {
     property int cfg_iconSpacing
     property int cfg_iconSize
     property bool cfg_expanderOnLeft
+    property bool cfg_autoSort
     property int cfg_popupColumns
     property bool cfg_reverseIconOrder
     property bool cfg_showAllItems
@@ -349,6 +350,18 @@ KCMUtils.ScrollViewKCM {
                 text: i18nc("@option:check", "Show on the left, before the icons")
                 checked: iconsPage.cfg_expanderOnLeft
                 onToggled: iconsPage.cfg_expanderOnLeft = checked
+            }
+
+            QQC2.CheckBox {
+                id: autoSortCheck
+
+                Kirigami.FormData.label: i18nc("@label Tray icon order", "Icon order:")
+                text: i18nc("@option:check", "Sort icons automatically")
+                checked: iconsPage.cfg_autoSort
+                onToggled: iconsPage.cfg_autoSort = checked
+
+                QQC2.ToolTip.visible: hovered
+                QQC2.ToolTip.text: i18nc("@info:tooltip", "When off, drag icons to arrange them yourself, and drag them between the panel and the arrow's popup to pin or unpin them.")
             }
 
             QQC2.SpinBox {

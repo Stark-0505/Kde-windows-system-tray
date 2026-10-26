@@ -60,6 +60,13 @@ Right-click the tray → **Configure System Tray…** → General:
 - **Icons per row in popup** — the hidden-icons popup is a compact, icon-only grid that sizes itself to the number of icons (names appear as tooltips).
 - The popup highlight is a flat rounded box on the icon or arrow that opened it, rather than the theme's sliding tab indicator.
 
+### Arranging, pinning and unpinning icons
+
+- **Drag an icon** (in the panel or in the arrow's popup) to rearrange it. The icon you are dragging is dimmed, a copy follows the pointer, and a line shows where it will land.
+- **Pin** an icon by dragging it from the popup onto the panel (or onto the arrow). **Unpin** it by dragging it onto the arrow, or into the popup.
+- **Icon order** (settings): leave "Sort icons automatically" off (the default) to keep your own order, or turn it on to sort by category and name. Your manual order is remembered while automatic sorting is on.
+- The system group (network, volume, battery) stays where it is.
+
 <br>
 
 ## 📦 Installation

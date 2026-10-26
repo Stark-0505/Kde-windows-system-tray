@@ -38,6 +38,66 @@ PlasmaComponents3.ScrollView {
     hoverEnabled: true
     background: null
 
+    // ── Drag & drop support (the controller lives in main.qml) ──────────────
+    // Insertion slot (0..itemCount) nearest to a point given in the grid's own
+    // coordinates: the slot before the cell under the pointer, or after it when
+    // the pointer is in the cell's second half.
+    function slotAt(px, py) {
+        const n = hiddenTasks.itemCount;
+        if (n === 0) {
+            return 0;
+        }
+        const cols = columnCount;
+        const cw = hiddenTasks.cellWidth;
+        const ch = hiddenTasks.cellHeight;
+        // In a right-to-left layout the grid is mirrored: measure from the
+        // right edge so "cell 0" is still the first icon.
+        const x = hiddenTasks.effectiveLayoutDirection === Qt.RightToLeft ? hiddenTasks.width - px : px;
+        const y = py + hiddenTasks.contentY;
+        const lastRow = Math.ceil(n / cols) - 1;
+        const row = Math.max(0, Math.min(lastRow, Math.floor(y / ch)));
+        const col = Math.floor(x / cw);
+        let slot;
+        if (col < 0) {
+            slot = row * cols;
+        } else if (col >= cols) {
+            slot = row * cols + cols;
+        } else {
+            slot = row * cols + col + ((x - col * cw) > cw / 2 ? 1 : 0);
+        }
+        return Math.max(0, Math.min(n, slot));
+    }
+
+    // The drop line for a slot, in the grid's content coordinates.
+    function indicatorRect(slot) {
+        const n = hiddenTasks.itemCount;
+        if (n === 0 || slot < 0) {
+            return Qt.rect(0, 0, 0, 0);
+        }
+        const cols = columnCount;
+        const cw = hiddenTasks.cellWidth;
+        const ch = hiddenTasks.cellHeight;
+        const inset = Kirigami.Units.smallSpacing;
+        let row;
+        let col;
+        if (slot >= n) {
+            // after the very last icon
+            row = Math.floor((n - 1) / cols);
+            col = ((n - 1) % cols) + 1;
+        } else {
+            row = Math.floor(slot / cols);
+            col = slot % cols;
+        }
+        // x as seen in the grid itself, then converted to content coordinates
+        // (the indicator is a child of the grid's content item).
+        const mirrored = hiddenTasks.effectiveLayoutDirection === Qt.RightToLeft;
+        const itemX = mirrored ? hiddenTasks.width - col * cw : col * cw;
+        // Centre the 2px line in the gap between two icons: icons are
+        // cellSpacing narrower than their cells, so the gap sits cellSpacing/2
+        // inside the cell boundary.
+        return Qt.rect(itemX + hiddenTasks.contentX - 1 - hiddenTasks.cellSpacing / 2, row * ch + inset, 2, ch - inset * 2);
+    }
+
     // Never show a scrollbar: its width would be taken out of the grid's
     // width, dropping a column, which makes the grid taller, which keeps the
     // scrollbar showing ("2 icons wide and scrolling"). The popup is sized to
@@ -59,6 +119,20 @@ PlasmaComponents3.ScrollView {
         // Don't let a 1px rounding overflow make the grid wiggle/scroll.
         boundsBehavior: Flickable.StopAtBounds
         interactive: contentHeight > height + 2
+
+        // Drop line shown between icons while dragging.
+        Rectangle {
+            z: 10
+            enabled: false
+            visible: root.dragActive && root.dropZone === "popup" && root.dropSlot >= 0
+            readonly property rect r: hiddenTasksView.indicatorRect(root.dropSlot)
+            x: r.x
+            y: r.y
+            width: r.width
+            height: r.height
+            radius: 1
+            color: Kirigami.Theme.textColor
+        }
 
         currentIndex: -1
         highlight: PlasmaExtras.Highlight {}

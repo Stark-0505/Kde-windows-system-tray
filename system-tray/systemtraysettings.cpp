@@ -15,6 +15,8 @@ static const QString SHOW_ALL_ITEMS_KEY = QStringLiteral("showAllItems");
 static const QString SHOWN_ITEMS_KEY = QStringLiteral("shownItems");
 static const QString HIDDEN_ITEMS_KEY = QStringLiteral("hiddenItems");
 static const QString DISABLED_SNIS_KEY = QStringLiteral("disabledStatusNotifiers");
+static const QString AUTO_SORT_KEY = QStringLiteral("autoSort");
+static const QString ITEM_ORDER_KEY = QStringLiteral("itemOrder");
 
 SystemTraySettings::SystemTraySettings(KConfigLoader *config, QObject *parent)
     : QObject(parent)
@@ -93,6 +95,16 @@ const QStringList SystemTraySettings::shownItems() const
 const QStringList SystemTraySettings::hiddenItems() const
 {
     return config->property(HIDDEN_ITEMS_KEY).toStringList();
+}
+
+bool SystemTraySettings::isAutoSort() const
+{
+    return config->property(AUTO_SORT_KEY).toBool();
+}
+
+const QStringList SystemTraySettings::itemOrder() const
+{
+    return config->property(ITEM_ORDER_KEY).toStringList();
 }
 
 void SystemTraySettings::cleanupPlugin(const QString &pluginId)

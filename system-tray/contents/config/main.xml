@@ -26,6 +26,14 @@
         <label>If true, all systray entries will be always in the main area, outside the popup.</label>
         <default>false</default>
     </entry>
+    <entry name="autoSort" type="bool">
+      <label>If true, tray icons are ordered automatically (by category, then name). If false (default), they follow itemOrder, which the user sets by dragging icons.</label>
+      <default>false</default>
+    </entry>
+    <entry name="itemOrder" type="StringList">
+      <label>User-defined order of tray icons (item ids), used when autoSort is false. Icons not listed come last.</label>
+      <default></default>
+    </entry>
     <entry name="knownItems" type="StringList" hidden="true">
       <default></default>
     </entry>

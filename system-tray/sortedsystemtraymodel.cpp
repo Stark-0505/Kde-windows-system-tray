@@ -5,6 +5,7 @@
 #include "sortedsystemtraymodel.h"
 #include "debug.h"
 #include "systemtraymodel.h"
+#include "systemtraysettings.h"
 #include <QList>
 
 static const QList<QString> s_categoryOrder = {
@@ -17,6 +18,22 @@ static const QList<QString> s_categoryOrder = {
 
 SortedSystemTrayModel::SortedSystemTrayModel(SortingType sorting, QObject *parent)
     : QSortFilterProxyModel(parent), m_sorting(sorting) { setSortLocaleAware(true); sort(0); }
+
+void SortedSystemTrayModel::setSettings(SystemTraySettings *settings) {
+    if (m_sorting != SortingType::SystemTray || m_settings == settings) return;
+    m_settings = settings;
+    if (m_settings) connect(m_settings, &SystemTraySettings::configurationChanged, this, &SortedSystemTrayModel::onSettingsChanged);
+    onSettingsChanged();
+}
+
+void SortedSystemTrayModel::onSettingsChanged() {
+    const bool manual = m_settings && !m_settings->isAutoSort();
+    const QStringList order = m_settings ? m_settings->itemOrder() : QStringList();
+    if (manual == m_manualOrder && order == m_itemOrder) return;
+    m_manualOrder = manual;
+    m_itemOrder = order;
+    invalidate(); // re-sort with the new rule
+}
 
 bool SortedSystemTrayModel::lessThan(const QModelIndex &left, const QModelIndex &right) const {
     switch (m_sorting) {
@@ -34,6 +51,18 @@ bool SortedSystemTrayModel::lessThanConfigurationPage(const QModelIndex &left, c
 bool SortedSystemTrayModel::lessThanSystemTray(const QModelIndex &left, const QModelIndex &right) const {
     QVariant lid = left.data(static_cast<int>(BaseModel::BaseRole::ItemId));
     QVariant rid = right.data(static_cast<int>(BaseModel::BaseRole::ItemId));
+    if (m_manualOrder) {
+        // User-defined order: ids listed in itemOrder come first, in that order.
+        // Unlisted ids (new icons) come after them, in the automatic order below,
+        // which keeps this a valid strict weak ordering.
+        const int lr = m_itemOrder.indexOf(lid.toString());
+        const int rr = m_itemOrder.indexOf(rid.toString());
+        if (lr != rr) {
+            if (lr == -1) return false;
+            if (rr == -1) return true;
+            return lr < rr;
+        }
+    }
     if (rid.toString() == QLatin1String("org.kde.plasma.notifications")) return false;
     if (lid.toString() == QLatin1String("org.kde.plasma.notifications")) return true;
     int cmp = compareCategoriesOrderly(left, right);
