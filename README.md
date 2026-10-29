@@ -74,7 +74,7 @@ Right-click the tray → **Configure System Tray…** → General:
 ### ⭐ Recommended — one-command install
 
 ```bash
-curl -fsSL https://github.com/RaceConditionWinner/Kde-windows-system-tray/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/KaizennGIT/Kde-windows-system-tray/releases/latest/download/install.sh | bash
 ```
 
 This automatically:
@@ -103,7 +103,7 @@ For other distros, or if you'd rather build from source.
    ```
 2. Clone this repository:
    ```bash
-   git clone https://github.com/RaceConditionWinner/Kde-windows-system-tray.git
+   git clone https://github.com/KaizennGIT/Kde-windows-system-tray.git
    cd Kde-windows-system-tray
    ```
 3. Build and install:
@@ -126,13 +126,18 @@ The manual path builds from source and never touches your panel layout automatic
 
 The one-command installer downloads a **prebuilt binary** and installs it as root (via `pkexec`) into the system Qt plugin directory, where it loads into `plasmashell`. Know what you're trusting:
 
-- The `SHA256SUMS` file is served from the same release as the binary, so it catches corruption, **not** a malicious publisher. You are trusting whoever controls the release.
-- The installer prints which repo and version it is pulling from. Pin them if you want repeatable installs:
+- It downloads from **this repository's releases** only (HTTPS only). Releases are built by GitHub Actions from the tagged source (`.github/workflows/release.yml`) and come with a build attestation. You can check a downloaded file was built by this repository's workflow:
+  ```
+  gh attestation verify <downloaded file> --repo KaizennGIT/Kde-windows-system-tray
+  ```
+- The `SHA256SUMS` file is served from the same release as the binary, so on its own it catches corruption, **not** a malicious publisher. The attestation above is what ties a binary to the source it was built from.
+- Pin repo and version for repeatable installs:
   ```
   curl -fsSL <install.sh URL> | WM_REPO=owner/repo WM_VERSION=v1.0.0 bash
   ```
-- Prefer to audit first? Download `install.sh`, read it, then run it. Or skip prebuilt binaries entirely and use [manual installation](#️-manual-installation), which builds from source.
+- The safest option is to skip prebuilt binaries: use [manual installation](#️-manual-installation), which builds from source on your machine so you can read what you run.
 - The root step re-verifies the binary's hash from a root-owned copy, so a local process can't swap the file between the check and the install.
+- If there is no release yet, the one-liner stops with an error. Build from source in that case.
 
 ## ✅ Requirements
 
@@ -142,7 +147,7 @@ The one-command installer downloads a **prebuilt binary** and installs it as roo
 ## 🗑️ Uninstall
 
 ```bash
-curl -fsSL https://github.com/RaceConditionWinner/Kde-windows-system-tray/releases/latest/download/uninstall.sh | bash
+curl -fsSL https://github.com/KaizennGIT/Kde-windows-system-tray/releases/latest/download/uninstall.sh | bash
 ```
 
 Restores the stock System Tray in its original position, restores your

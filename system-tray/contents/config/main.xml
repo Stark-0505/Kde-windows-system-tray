@@ -26,12 +26,20 @@
         <label>If true, all systray entries will be always in the main area, outside the popup.</label>
         <default>false</default>
     </entry>
+    <entry name="popupAnimation" type="bool">
+      <label>Whether the old popup stays on screen, sliding down and fading, when one popup is replaced by another.</label>
+      <default>true</default>
+    </entry>
     <entry name="autoSort" type="bool">
       <label>If true, tray icons are ordered automatically (by category, then name). If false (default), they follow itemOrder, which the user sets by dragging icons.</label>
       <default>false</default>
     </entry>
     <entry name="itemOrder" type="StringList">
       <label>User-defined order of tray icons (item ids), used when autoSort is false. Icons not listed come last.</label>
+      <default></default>
+    </entry>
+    <entry name="dismissedItems" type="StringList" hidden="true">
+      <label>Dynamic tray items the user moved to the popup while they were active. They return to the panel the next time their own status changes.</label>
       <default></default>
     </entry>
     <entry name="knownItems" type="StringList" hidden="true">

@@ -84,6 +84,11 @@ ContainmentItem {
         if (popupControlHovers === 0) {
             inactivePopupGuard.restart();
         }
+        if (hovered) {
+            // A click is probably coming: photograph the popup as it is now, so
+            // the ghost of the old one shows exactly what was on screen.
+            popupGhost.capture();
+        }
     }
 
     // After switching, give the popup focus again so clicking elsewhere closes
@@ -252,9 +257,12 @@ ContainmentItem {
             zone = "none";
             slot = -1;
         }
-        dropZone = zone;
-        dropSlot = slot;
-        panelIndicator = (zone === "panel" && slot >= 0) ? panelIndicatorFor(slot) : Qt.rect(0, 0, 0, 0);
+        // Pointer moves are frequent: only touch anything when the target changed.
+        if (zone !== dropZone || slot !== dropSlot) {
+            dropZone = zone;
+            dropSlot = slot;
+            panelIndicator = (zone === "panel" && slot >= 0) ? panelIndicatorFor(slot) : Qt.rect(0, 0, 0, 0);
+        }
     }
 
     function endDrag() {
@@ -294,11 +302,20 @@ ContainmentItem {
             }
         }
         if (crossing) {
+            const cfg = Plasmoid.configuration;
             const lists = toZone === "panel"
-                ? TrayOrder.pin(Plasmoid.configuration.shownItems, Plasmoid.configuration.hiddenItems, id)
-                : TrayOrder.unpin(Plasmoid.configuration.shownItems, Plasmoid.configuration.hiddenItems, id);
-            Plasmoid.configuration.shownItems = lists.shown;
-            Plasmoid.configuration.hiddenItems = lists.hidden;
+                ? TrayOrder.pin(cfg.shownItems, cfg.hiddenItems, cfg.dismissedItems, id)
+                : TrayOrder.unpin(cfg.shownItems, cfg.hiddenItems, cfg.dismissedItems, id);
+            // Each write is a config save plus a model refresh: skip the lists that didn't change.
+            if (!TrayOrder.sameList(lists.shown, cfg.shownItems)) {
+                cfg.shownItems = lists.shown;
+            }
+            if (!TrayOrder.sameList(lists.hidden, cfg.hiddenItems)) {
+                cfg.hiddenItems = lists.hidden;
+            }
+            if (!TrayOrder.sameList(lists.dismissed, cfg.dismissedItems)) {
+                cfg.dismissedItems = lists.dismissed;
+            }
         }
     }
 
@@ -698,6 +715,29 @@ ContainmentItem {
                     color: Kirigami.Theme.textColor
                     opacity: 0.2
                 }
+
+                // What dropping here will do: a small pin badge when dragging an
+                // icon up from the popup, an unpin badge when dragging one down
+                // from the panel.
+                Rectangle {
+                    z: 1
+                    visible: root.dragActive && root.dropZone === "arrow"
+                    anchors.centerIn: parent
+                    width: Kirigami.Units.iconSizes.small + Kirigami.Units.smallSpacing
+                    height: width
+                    radius: width / 2
+                    color: Kirigami.Theme.backgroundColor
+                    border.width: 1
+                    border.color: Qt.alpha(Kirigami.Theme.textColor, 0.35)
+
+                    Kirigami.Icon {
+                        anchors.centerIn: parent
+                        width: Kirigami.Units.iconSizes.small
+                        height: width
+                        source: root.dragFromHidden ? "window-pin" : "window-unpin"
+                        fallback: "pin"
+                    }
+                }
             }
 
             // The Windows 11–style system cluster: Network, Volume and
@@ -815,6 +855,17 @@ ContainmentItem {
                     }
                 }
             }
+        }
+
+        // Keeps the old popup on screen, sliding down and fading under the new one.
+        PopupGhost {
+            id: popupGhost
+            target: expandedRepresentation
+            mode: expandedRepresentation.modeKey
+            active: systemTrayState.expanded
+            anchorItem: root.popupAnchor
+            mainDialog: dialog
+            animationEnabled: Plasmoid.configuration.popupAnimation
         }
 
         Timer {

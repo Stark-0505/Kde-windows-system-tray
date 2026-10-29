@@ -48,7 +48,8 @@ BaseModel::BaseModel(QPointer<SystemTraySettings> settings, QObject *parent)
     : QAbstractListModel(parent), m_settings(settings),
       m_showAllItems(m_settings ? m_settings->isShowAllItems() : true),
       m_shownItems(m_settings ? m_settings->shownItems() : decltype(m_shownItems){}),
-      m_hiddenItems(m_settings ? m_settings->hiddenItems() : decltype(m_hiddenItems){})
+      m_hiddenItems(m_settings ? m_settings->hiddenItems() : decltype(m_hiddenItems){}),
+      m_dismissedItems(m_settings ? m_settings->dismissedItems() : decltype(m_dismissedItems){})
 {
     if (m_settings) connect(m_settings, &SystemTraySettings::configurationChanged, this, &BaseModel::onConfigurationChanged);
 }
@@ -70,6 +71,7 @@ void BaseModel::onConfigurationChanged() {
     m_showAllItems = m_settings->isShowAllItems();
     m_shownItems = m_settings->shownItems();
     m_hiddenItems = m_settings->hiddenItems();
+    m_dismissedItems = m_settings->dismissedItems();
     if (rowCount() == 0) return;
     Q_EMIT dataChanged(index(0, 0), index(rowCount() - 1, 0), {static_cast<int>(BaseModel::BaseRole::EffectiveStatus)});
 }
@@ -90,13 +92,26 @@ Plasma::Types::ItemStatus BaseModel::calculateEffectiveStatus(bool canRender, Pl
 
     bool forcedShown = m_showAllItems || m_shownItems.contains(itemId);
     bool forcedHidden = m_hiddenItems.contains(itemId);
+    // Dynamic items the user moved to the popup while active: they stay there
+    // until their own status next changes (see nativeStatusChanged).
+    bool dismissed = !forcedShown && m_dismissedItems.contains(itemId);
     bool isDisabledSni = m_settings->isDisabledStatusNotifier(itemId);
     if (!forcedShown && (status == Plasma::Types::ItemStatus::HiddenStatus || isDisabledSni))
         return Plasma::Types::ItemStatus::HiddenStatus;
-    else if (forcedShown || (!forcedHidden && status != Plasma::Types::ItemStatus::PassiveStatus))
+    else if (forcedShown || (!forcedHidden && !dismissed && status != Plasma::Types::ItemStatus::PassiveStatus))
         return Plasma::Types::ItemStatus::ActiveStatus;
     else
         return Plasma::Types::ItemStatus::PassiveStatus;
+}
+
+void BaseModel::nativeStatusChanged(const QString &itemId, Plasma::Types::ItemStatus status) {
+    // Any change in an item's own status is either new activity (it has
+    // something to show again) or the activity ending. Either way a dismissal
+    // ("I moved it to the popup") has served its purpose, so the item goes
+    // back to following its own status. The first sighting never counts.
+    if (m_statusTracker.update(itemId, static_cast<int>(status)) && m_settings && m_settings->dismissedItems().contains(itemId)) {
+        m_settings->setItemDismissed(itemId, false);
+    }
 }
 
 static QString plasmoidCategoryForMetadata(const KPluginMetaData &metadata) {
@@ -160,8 +175,10 @@ void PlasmoidModel::addApplet(Plasma::Applet *applet) {
     int idx = indexOfPluginId(meta.pluginId());
     if (idx < 0) { idx = rowCount(); appendRow(meta); }
     m_items[idx].applet = applet;
-    connect(applet, &Plasma::Applet::statusChanged, this, [this, applet](Plasma::Types::ItemStatus) {
+    nativeStatusChanged(meta.pluginId(), applet->status()); // seeds the tracker
+    connect(applet, &Plasma::Applet::statusChanged, this, [this, applet](Plasma::Types::ItemStatus status) {
         int idx = indexOfPluginId(applet->pluginMetaData().pluginId());
+        nativeStatusChanged(applet->pluginMetaData().pluginId(), status);
         Q_EMIT dataChanged(index(idx, 0), index(idx, 0), {static_cast<int>(BaseRole::Status)});
     });
     Q_EMIT dataChanged(index(idx, 0), index(idx, 0));
@@ -301,7 +318,12 @@ void StatusNotifierModel::removeSource(const QString &source) {
 
 void StatusNotifierModel::dataUpdated(const QString &sourceName) {
     int idx = indexOfSource(sourceName);
-    if (idx >= 0) Q_EMIT dataChanged(index(idx, 0), index(idx, 0));
+    if (idx >= 0) {
+        if (StatusNotifierItemSource *sniData = m_sniHost->itemForService(sourceName)) {
+            nativeStatusChanged(extractItemId(sniData), extractStatus(sniData));
+        }
+        Q_EMIT dataChanged(index(idx, 0), index(idx, 0));
+    }
 }
 
 int StatusNotifierModel::indexOfSource(const QString &source) const {
@@ -413,6 +435,10 @@ void BackgroundAppsModel::stopBackgroundApp(const QModelIndex &index)
         if (watcher->isError()) {
             qCInfo(SYSTEM_TRAY) << "Failed to terminate background app via dbus:" << watcher->error();
             for (const auto &instance : std::as_const(instances)) {
+                // The instance id comes from outside; never let it be read as an option.
+                if (instance.isEmpty() || instance.startsWith(u'-')) {
+                    continue;
+                }
                 auto job = new KIO::CommandLauncherJob("flatpak"_L1, {"kill"_L1, instance});
                 auto delegate = new KNotificationJobUiDelegate(KJobUiDelegate::AutoErrorHandlingEnabled);
                 job->setUiDelegate(delegate);

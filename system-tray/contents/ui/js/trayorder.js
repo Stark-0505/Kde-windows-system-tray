@@ -11,6 +11,15 @@
 // Panel icons and popup icons are different sets, so one flat list is enough:
 // each zone just shows its own members in the order they appear in the list.
 
+// The order list lives in the config file and the ids come from other programs,
+// so keep it bounded: skip absurdly long ids and cap the number of entries.
+var MAX_ID_LENGTH = 256;
+var MAX_ORDER_ENTRIES = 300;
+
+function usable(id) {
+    return typeof id === "string" && id.length > 0 && id.length <= MAX_ID_LENGTH;
+}
+
 function indexOf(list, id) {
     for (var i = 0; i < list.length; ++i) {
         if (list[i] === id) {
@@ -108,28 +117,46 @@ function newOrder(panelIds, popupIds, id, fromZone, toZone, slot, oldOrder) {
     } else {
         popup = placed;
     }
-    var all = panel.concat(popup);
+    var all = [];
+    var joined = panel.concat(popup);
+    for (var j = 0; j < joined.length; ++j) {
+        if (usable(joined[j]) && indexOf(all, joined[j]) === -1) {
+            all.push(joined[j]);
+        }
+    }
     var rest = [];
     for (var i = 0; i < oldOrder.length; ++i) {
-        if (indexOf(all, oldOrder[i]) === -1) {
+        if (usable(oldOrder[i]) && indexOf(all, oldOrder[i]) === -1 && indexOf(rest, oldOrder[i]) === -1) {
             rest.push(oldOrder[i]);
         }
     }
-    return all.concat(rest);
+    // Icons that are on screen now win over remembered ones when over the cap.
+    return all.concat(rest).slice(0, MAX_ORDER_ENTRIES);
 }
 
+// The three lists that decide where an icon lives:
+//   shown     - pinned: always in the panel
+//   hidden    - "popup only": always in the popup, even when active (dynamic off)
+//   dismissed - dynamic icons the user moved to the popup while active: they stay
+//               there until the icon's own status next changes (handled in C++),
+//               then go back to following it ("dynamic").
+
 // Pin: always show in the panel.
-function pin(shown, hidden, id) {
+function pin(shown, hidden, dismissed, id) {
     return {
         shown: withId(shown, id),
-        hidden: without(hidden, id)
+        hidden: without(hidden, id),
+        dismissed: without(dismissed, id)
     };
 }
 
-// Unpin: keep in the popup.
-function unpin(shown, hidden, id) {
+// Unpin: move to the popup. Dynamic icons are only dismissed, NOT disabled:
+// they come back by themselves the next time they have something to show.
+// Icons whose dynamic behaviour is switched off ("popup only") stay put.
+function unpin(shown, hidden, dismissed, id) {
     return {
         shown: without(shown, id),
-        hidden: withId(hidden, id)
+        hidden: hidden.slice(),
+        dismissed: indexOf(hidden, id) !== -1 ? without(dismissed, id) : withId(dismissed, id)
     };
 }

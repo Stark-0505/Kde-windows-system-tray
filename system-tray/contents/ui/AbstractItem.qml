@@ -150,6 +150,10 @@ PlasmaCore.ToolTipArea {
         enabled: abstractItem.draggable
         target: null // nothing moves: the controller shows a drop line instead
         acceptedButtons: Qt.LeftButton
+        // Start dragging after a few pixels (Windows uses about 4) instead of
+        // Qt's default 10, which made picking an icon up feel sluggish. Hand
+        // jitter during an ordinary click is still well below this.
+        dragThreshold: 5
 
         function report() {
             const sp = centroid.scenePosition;

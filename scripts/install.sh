@@ -8,7 +8,7 @@
 #  Modern one on your panel — in place, no manual panel editing.
 #
 #  Usage:
-#      curl -fsSL https://github.com/RaceConditionWinner/Kde-windows-system-tray/releases/latest/download/install.sh | bash
+#      curl -fsSL https://github.com/KaizennGIT/Kde-windows-system-tray/releases/latest/download/install.sh | bash
 #
 #  Optional environment variables:
 #      WM_REPO=owner/repo   GitHub repo to download release assets from
@@ -19,10 +19,13 @@
 # ──────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-REPO="${WM_REPO:-RaceConditionWinner/Kde-windows-system-tray}"
+REPO="${WM_REPO:-KaizennGIT/Kde-windows-system-tray}"
 WM_VERSION="${WM_VERSION:-latest}"
 [[ "$REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || { echo "Invalid WM_REPO: $REPO" >&2; exit 1; }
 [[ "$WM_VERSION" =~ ^[A-Za-z0-9._-]+$ ]]            || { echo "Invalid WM_VERSION: $WM_VERSION" >&2; exit 1; }
+# HTTPS only (also for redirects), modern TLS, and fail on HTTP errors.
+CURL_OPTS=(--proto '=https' --tlsv1.2 -fsSL)
+NO_RELEASE_HINT="Does https://github.com/${REPO}/releases have a release? To build from source instead: git clone https://github.com/${REPO}.git && cd Kde-windows-system-tray/system-tray && ./dev.sh"
 if [ "$WM_VERSION" = "latest" ]; then
     RELEASE_BASE="https://github.com/${REPO}/releases/latest/download"
 else
@@ -122,9 +125,9 @@ mkdir -p "$STATE_DIR"
 # ── Download + verify ──────────────────────────────────────────────────
 TMP_DIR="$(mktemp -d)"
 info "Downloading release artifacts from github.com/${REPO} (${WM_VERSION})..."
-curl -fsSL "$RELEASE_BASE/$SUMS_ASSET"  -o "$TMP_DIR/$SUMS_ASSET"  || die "Failed to download $SUMS_ASSET"
-curl -fsSL "$RELEASE_BASE/$SO_ASSET"    -o "$TMP_DIR/$SO_ASSET"    || die "Failed to download $SO_ASSET"
-curl -fsSL "$RELEASE_BASE/$THEME_ASSET" -o "$TMP_DIR/$THEME_ASSET" || die "Failed to download $THEME_ASSET"
+curl "${CURL_OPTS[@]}" "$RELEASE_BASE/$SUMS_ASSET"  -o "$TMP_DIR/$SUMS_ASSET"  || die "Failed to download $SUMS_ASSET. ${NO_RELEASE_HINT}"
+curl "${CURL_OPTS[@]}" "$RELEASE_BASE/$SO_ASSET"    -o "$TMP_DIR/$SO_ASSET"    || die "Failed to download $SO_ASSET. ${NO_RELEASE_HINT}"
+curl "${CURL_OPTS[@]}" "$RELEASE_BASE/$THEME_ASSET" -o "$TMP_DIR/$THEME_ASSET" || die "Failed to download $THEME_ASSET. ${NO_RELEASE_HINT}"
 
 info "Verifying checksums..."
 (

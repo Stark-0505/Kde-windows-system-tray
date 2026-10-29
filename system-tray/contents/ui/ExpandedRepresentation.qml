@@ -68,18 +68,10 @@ Item {
     // The grid itself, for drag & drop hit-testing (see main.qml).
     readonly property alias hiddenGrid: hiddenItemsView
 
-    // What the popup is showing; a change while it stays open triggers the
-    // Windows-style switch animation (see PopupTransition.qml).
+    // What the popup is showing; a change while it stays open hands over to
+    // the ghost of the old popup (see PopupGhost.qml and main.qml).
     readonly property string modeKey: systemTrayState.activeApplet ? "applet"
         : systemTrayState.hiddenItemsRequested ? "hidden" : "actions"
-
-    PopupTransition {
-        id: switchTransition
-        anchors.fill: parent
-        target: popup
-        mode: popup.modeKey
-        active: systemTrayState.expanded
-    }
 
     // The dragged icon, following the pointer while it is over this popup.
     Image {
@@ -123,8 +115,6 @@ Item {
     // own PageHeader; the action panel is self-contained.
     PlasmaExtras.PlasmoidHeading {
         id: plasmoidHeading
-        opacity: switchTransition.contentOpacity
-        transform: Translate { y: switchTransition.contentShift }
         anchors {
             top: parent.top
             left: parent.left
@@ -140,8 +130,6 @@ Item {
     ColumnLayout {
         id: expandedRepresentation
         anchors.fill: parent
-        opacity: switchTransition.contentOpacity
-        transform: Translate { y: switchTransition.contentShift }
         spacing: plasmoidHeading.visible ? plasmoidHeading.bottomPadding : 0
 
         // Header content (unknown applets only)
@@ -330,8 +318,6 @@ Item {
     // Merged PlasmoidHeading footer — only for unknown applets that have one.
     PlasmaExtras.PlasmoidHeading {
         id: plasmoidFooter
-        opacity: switchTransition.contentOpacity
-        transform: Translate { y: switchTransition.contentShift }
         position: PlasmaComponents.ToolBar.Footer
         anchors { bottom: parent.bottom; left: parent.left; right: parent.right }
         visible: popup.unknownActive && container.appletHasFooter

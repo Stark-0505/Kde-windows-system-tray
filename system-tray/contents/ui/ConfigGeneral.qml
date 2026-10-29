@@ -23,7 +23,7 @@ import org.kde.kquickcontrols as KQC
 import org.kde.plasma.core as PlasmaCore
 import org.kde.plasma.plasmoid
 
-KCMUtils.ScrollViewKCM {
+KCMUtils.SimpleKCM {
     id: iconsPage
 
     signal configurationChanged
@@ -32,10 +32,10 @@ KCMUtils.ScrollViewKCM {
     // The Windows 11–style system cluster: Network, Volume and Battery are
     // always shown next to the ExpanderArrow regardless of configuration
     // (see calculateEffectiveStatus in systemtraymodel.cpp), so their entry
-    // below is locked to "Always show" rather than left editable. This is a
-    // separate KCM QML document from main.qml/SystemTrayState.qml and can't
-    // share their systemClusterPluginIds property directly — keep this
-    // literal list in sync with those.
+    // below is locked rather than left editable. This is a separate KCM QML
+    // document from main.qml/SystemTrayState.qml and can't share their
+    // systemClusterPluginIds property directly — keep this literal list in
+    // sync with those.
     readonly property var systemClusterPluginIds: [
         "org.kde.plasma.networkmanagement",
         "org.kde.plasma.volume",
@@ -47,38 +47,52 @@ KCMUtils.ScrollViewKCM {
     property int cfg_iconSize
     property bool cfg_expanderOnLeft
     property bool cfg_autoSort
+    property bool cfg_popupAnimation
     property int cfg_popupColumns
     property bool cfg_reverseIconOrder
     property bool cfg_showAllItems
     property list<string> cfg_shownItems: []
     property list<string> cfg_hiddenItems: []
+    property list<string> cfg_dismissedItems: []
     property list<string> cfg_extraItems: []
     property list<string> cfg_disabledStatusNotifiers: []
 
-    // We can share one combobox model across all delegates, they all have the same options
-    readonly property var comboBoxModel: {
-        const autoElement = {
-            "value": "auto",
-            "text": i18nc("@item:inlistbox Show this System Tray item when relevant", "Show when relevant") // qmllint disable unqualified
-        };
-        const shownElement = {
-            "value": "shown",
-            "text": i18nc("@item:inlistbox Always show this System Tray item", "Always show") // qmllint disable unqualified
-        };
-        const hiddenElement = {
-            "value": "hidden",
-            "text": i18nc("@item:inlistbox Show this System Tray item only in the expanded popup", "Show only in popup") // qmllint disable unqualified
-        };
-        const disabledElement = {
-            "value": "disabled",
-            "text": i18nc("@item:inlistbox Never show this System Tray item; disable it", "Never show (disabled)") // qmllint disable unqualified
-        };
-
-        return cfg_showAllItems ? [autoElement, disabledElement] : [autoElement, shownElement, hiddenElement, disabledElement];
-    }
-
     readonly property var changedShortcuts: new Map()
     readonly property var changedVisibility: new Map()
+
+    // ── How an item is shown, as three independent choices ──────────────────
+    // Behind the scenes there are still four stored values per item; these two
+    // functions translate between them and the three controls on each row:
+    //
+    //   Enabled  Placement  Dynamic   stored value   meaning
+    //   off      -          -         "disabled"     the item is switched off
+    //   on       Pinned     -         "shown"        always in the panel
+    //   on       Popup      on        "auto"         in the popup, comes to the
+    //                                                panel when it has news
+    //   on       Popup      off       "hidden"       always in the popup
+    function visibilityParts(visibility) {
+        switch (visibility) {
+        case "shown":
+            return { enabled: true, placement: "pinned", dynamic: false };
+        case "hidden":
+            return { enabled: true, placement: "popup", dynamic: false };
+        case "disabled":
+            return { enabled: false, placement: "popup", dynamic: true };
+        case "auto":
+        default:
+            return { enabled: true, placement: "popup", dynamic: true };
+        }
+    }
+
+    function visibilityFrom(enabled, placement, dynamic) {
+        if (!enabled) {
+            return "disabled";
+        }
+        if (placement === "pinned") {
+            return "shown";
+        }
+        return dynamic ? "auto" : "hidden";
+    }
 
     function saveConfig() {
         for (const [key, value] of changedVisibility.entries()) {
@@ -91,6 +105,7 @@ KCMUtils.ScrollViewKCM {
         changedVisibility.clear();
         cfg_shownItemsChanged();
         cfg_hiddenItemsChanged();
+        cfg_dismissedItemsChanged();
         cfg_extraItemsChanged();
         cfg_disabledStatusNotifiersChanged();
         changedShortcutsChanged();
@@ -100,6 +115,7 @@ KCMUtils.ScrollViewKCM {
     function updateVisibility(itemId: string, visibility: string): void {
         const shownIndex = cfg_shownItems.indexOf(itemId);
         const hiddenIndex = cfg_hiddenItems.indexOf(itemId);
+        const dismissedIndex = cfg_dismissedItems.indexOf(itemId);
         const extraIndex = cfg_extraItems.indexOf(itemId);
         const disabledSniIndex = cfg_disabledStatusNotifiers.indexOf(itemId);
 
@@ -108,6 +124,10 @@ KCMUtils.ScrollViewKCM {
         }
         if (hiddenIndex > -1) {
             cfg_hiddenItems.splice(hiddenIndex, 1);
+        }
+        // An explicit choice here replaces any earlier "moved it to the popup" dismissal.
+        if (dismissedIndex > -1) {
+            cfg_dismissedItems.splice(dismissedIndex, 1);
         }
         if (extraIndex > -1) {
             cfg_extraItems.splice(extraIndex, 1);
@@ -174,8 +194,136 @@ KCMUtils.ScrollViewKCM {
         }
     }
 
-    header: ColumnLayout {
-        spacing: Kirigami.Units.smallSpacing
+    // ── Reusable pieces ─────────────────────────────────────────────────────
+
+    // A rounded card with a title; children go in the body.
+    component SettingsCard: Rectangle {
+        id: card
+
+        property string title
+        property string iconName
+        default property alias content: body.data
+
+        Layout.fillWidth: true
+        Layout.maximumWidth: Kirigami.Units.gridUnit * 46
+        Layout.alignment: Qt.AlignHCenter
+        implicitHeight: cardLayout.implicitHeight + Kirigami.Units.largeSpacing * 2
+
+        radius: Kirigami.Units.gridUnit / 2
+        Kirigami.Theme.colorSet: Kirigami.Theme.View
+        Kirigami.Theme.inherit: false
+        color: Kirigami.Theme.backgroundColor
+        border.width: 1
+        border.color: Qt.alpha(Kirigami.Theme.textColor, 0.12)
+
+        ColumnLayout {
+            id: cardLayout
+            anchors {
+                fill: parent
+                margins: Kirigami.Units.largeSpacing
+            }
+            spacing: Kirigami.Units.largeSpacing
+
+            RowLayout {
+                spacing: Kirigami.Units.smallSpacing
+
+                Kirigami.Icon {
+                    source: card.iconName
+                    fallback: "preferences-system"
+                    implicitWidth: Kirigami.Units.iconSizes.smallMedium
+                    implicitHeight: Kirigami.Units.iconSizes.smallMedium
+                }
+                Kirigami.Heading {
+                    Layout.fillWidth: true
+                    level: 4
+                    text: card.title
+                    textFormat: Text.PlainText
+                }
+            }
+
+            ColumnLayout {
+                id: body
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.largeSpacing
+            }
+        }
+    }
+
+    // One setting: title and a short explanation on the left, the control on
+    // the right (or underneath, when the page is narrow).
+    component SettingRow: GridLayout {
+        id: row
+
+        property string title
+        property string description
+        default property alias control: holder.data
+        // Side by side only when the control AND a readable amount of text both
+        // fit; otherwise the control goes underneath. (Based on the control's
+        // own width, so a long segmented control switches to stacked earlier
+        // than a short switch does.)
+        readonly property bool wide: iconsPage.width - Kirigami.Units.largeSpacing * 6 >= holder.implicitWidth + Kirigami.Units.gridUnit * 14
+
+        Layout.fillWidth: true
+        columns: wide ? 2 : 1
+        columnSpacing: Kirigami.Units.largeSpacing
+        rowSpacing: Kirigami.Units.smallSpacing
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignVCenter
+            spacing: 0
+
+            QQC2.Label {
+                Layout.fillWidth: true
+                text: row.title
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+            }
+            QQC2.Label {
+                Layout.fillWidth: true
+                visible: row.description !== ""
+                text: row.description
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+                font: Kirigami.Theme.smallFont
+                opacity: 0.7
+            }
+        }
+
+        RowLayout {
+            id: holder
+            Layout.alignment: row.wide ? (Qt.AlignRight | Qt.AlignVCenter) : Qt.AlignLeft
+            spacing: Kirigami.Units.smallSpacing
+        }
+    }
+
+    // A row of connected buttons, one of them selected.
+    component SegmentedControl: RowLayout {
+        id: seg
+
+        // [{ text: "...", value: ... }, ...]
+        property var options: []
+        property var currentValue
+        signal activated(var value)
+
+        spacing: 0
+
+        Repeater {
+            model: seg.options
+            delegate: QQC2.Button {
+                required property var modelData
+                text: modelData.text
+                highlighted: seg.currentValue === modelData.value
+                onClicked: seg.activated(modelData.value)
+            }
+        }
+    }
+
+    // ── The page ────────────────────────────────────────────────────────────
+
+    ColumnLayout {
+        id: page
+        spacing: Kirigami.Units.largeSpacing
 
         Kirigami.InlineMessage {
             id: disablingSniMessage
@@ -187,6 +335,8 @@ KCMUtils.ScrollViewKCM {
             }
 
             Layout.fillWidth: true
+            Layout.maximumWidth: Kirigami.Units.gridUnit * 46
+            Layout.alignment: Qt.AlignHCenter
             type: Kirigami.MessageType.Warning
             text: xi18nc("@info:usagetip", "Look for a setting in <application>%1</application> to disable its tray icon before doing it here. Some apps’ tray icons were not designed to be disabled, and using this setting may cause them to behave unexpectedly.<nl/><nl/>Use this setting at your own risk, and do not report issues to KDE or the app’s author.", appName) // qmllint disable unqualified
             actions: [
@@ -202,6 +352,8 @@ KCMUtils.ScrollViewKCM {
 
             visible: iconsPage.changedVisibility.get("org.kde.plasma.clipboard") === "disabled"
             Layout.fillWidth: true
+            Layout.maximumWidth: Kirigami.Units.gridUnit * 46
+            Layout.alignment: Qt.AlignHCenter
             type: Kirigami.MessageType.Warning
             text: xi18nc("@info:usagetip", "Disabling the clipboard is not recommended, as it will cause copied data to be lost when the application it was copied from is closed.<nl/><nl/>Only do this if you’ve manually added a standalone Clipboard widget somewhere else, or are using a 3rd-party clipboard manager. Also, instead consider configuring the clipboard to not save history, or to only remember one item at a time.") // qmllint disable unqualified
         }
@@ -211,51 +363,38 @@ KCMUtils.ScrollViewKCM {
 
             visible: iconsPage.changedVisibility.get("org.kde.plasma.notifications") === "disabled"
             Layout.fillWidth: true
+            Layout.maximumWidth: Kirigami.Units.gridUnit * 46
+            Layout.alignment: Qt.AlignHCenter
             type: Kirigami.MessageType.Warning
             text: xi18nc("@info:usagetip", "Disabling the Notifications widget is not recommended, as notifications sent by apps will no longer be shown.<nl/><nl/>Only do this if you’ve manually added a standalone Notifications widget somewhere else, or are intentionally using a 3rd-party notification manager to handle notifications.") // qmllint disable unqualified
         }
 
-        Kirigami.FormLayout {
-            id: formLayout
+        // ── Appearance ──
+        SettingsCard {
+            title: i18nc("@title:group", "Appearance") // qmllint disable unqualified
+            iconName: "preferences-desktop-theme"
 
-            readonly property int maxComboboxWidth: Math.max(sizeChooser.implicitWidth, spacingChooser.implicitWidth, layoutChooser.implicitWidth)
+            SettingRow {
+                title: i18nc("@label", "Icon size") // qmllint disable unqualified
+                description: i18nc("@info", "Used in the panel and in the popup.") // qmllint disable unqualified
 
-            QQC2.ComboBox {
-                id: sizeChooser
-
-                readonly property string scaleString: Plasmoid.formFactor === PlasmaCore.Types.Horizontal
-                    ? i18nc("@item:inlistbox Icon size", "Scale with Panel height")
-                    : i18nc("@item:inlistbox Icon size", "Scale with Panel width")
-
-                Kirigami.FormData.label: i18nc("@label:listbox Whether the system tray icons in the Panel always stay small or scale with the Panel's size", "Panel icon size:")
-                Layout.preferredWidth: formLayout.maxComboboxWidth
-                model: [
-                    {
-                        "label": i18nc("@item:inlistbox Icon size", "Custom size"),
-                        "size": "small"
-                    },
-                    {
-                        "label": scaleString,
-                        "size": "scale"
-                    }
-                ]
-                textRole: "label"
-
-                currentIndex: iconsPage.cfg_scaleIconsToFit ? 1 : 0
-
-                onActivated: index => {
-                    iconsPage.cfg_scaleIconsToFit = model[currentIndex]["size"] == "scale";
+                SegmentedControl {
+                    options: [
+                        { text: i18nc("@item:inlistbox Icon size", "Custom"), value: false }, // qmllint disable unqualified
+                        { text: Plasmoid.formFactor === PlasmaCore.Types.Horizontal
+                              ? i18nc("@item:inlistbox Icon size", "Fit panel height")
+                              : i18nc("@item:inlistbox Icon size", "Fit panel width"), value: true } // qmllint disable unqualified
+                    ]
+                    currentValue: iconsPage.cfg_scaleIconsToFit
+                    onActivated: value => iconsPage.cfg_scaleIconsToFit = value
                 }
             }
 
-            RowLayout {
-                Kirigami.FormData.label: i18nc("@label:slider Size in pixels of the system tray icons", "Icon size:")
-                enabled: !iconsPage.cfg_scaleIconsToFit
-                spacing: Kirigami.Units.smallSpacing
+            SettingRow {
+                visible: !iconsPage.cfg_scaleIconsToFit
+                title: i18nc("@label:slider", "Custom size") // qmllint disable unqualified
 
                 QQC2.Slider {
-                    id: iconSizeSlider
-
                     Layout.preferredWidth: Kirigami.Units.gridUnit * 10
                     from: 12
                     to: 48
@@ -264,192 +403,200 @@ KCMUtils.ScrollViewKCM {
                     value: iconsPage.cfg_iconSize
                     onMoved: iconsPage.cfg_iconSize = Math.round(value)
                 }
-
                 QQC2.Label {
                     Layout.minimumWidth: Kirigami.Units.gridUnit * 3
-                    text: i18nc("@info Size in pixels", "%1 px", iconsPage.cfg_iconSize)
+                    text: i18nc("@info Size in pixels", "%1 px", iconsPage.cfg_iconSize) // qmllint disable unqualified
                     textFormat: Text.PlainText
                 }
             }
 
-            QQC2.ComboBox {
-                id: spacingChooser
+            SettingRow {
+                title: i18nc("@option:check", "Popup animation") // qmllint disable unqualified
+                description: i18nc("@info", "When one popup replaces another, the old one slides down and fades underneath.") // qmllint disable unqualified
 
-                Kirigami.FormData.label: i18nc("@label:listbox The spacing between system tray icons in the Panel", "Spacing:")
-                Layout.preferredWidth: formLayout.maxComboboxWidth
-                model: [
-                    {
-                        "label": i18nc("@item:inlistbox Icon spacing", "Small"),
-                        "spacing": 1
-                    },
-                    {
-                        "label": i18nc("@item:inlistbox Icon spacing", "Normal"),
-                        "spacing": 2
-                    },
-                    {
-                        "label": i18nc("@item:inlistbox Icon spacing", "Large"),
-                        "spacing": 6
-                    }
-                ]
-                textRole: "label"
-
-                currentIndex: switch (iconsPage.cfg_iconSpacing) {
-                    case 1: return 0; // Small
-                    case 2: return 1; // Normal
-                    case 6: return 2; // Large
-                }
-
-                onActivated: index => {
-                    iconsPage.cfg_iconSpacing = model[currentIndex]["spacing"];
+                QQC2.Switch {
+                    checked: iconsPage.cfg_popupAnimation
+                    onToggled: iconsPage.cfg_popupAnimation = checked
                 }
             }
 
-            QQC2.ComboBox {
-                id: layoutChooser
+            SettingRow {
+                title: i18nc("@label", "Spacing") // qmllint disable unqualified
+                description: i18nc("@info", "Space between icons in the panel.") // qmllint disable unqualified
 
-                Kirigami.FormData.label: i18nc("@label:listbox Which direction system tray icons in the Panel emerge from the expander arrow", "Direction:")
-                Layout.preferredWidth: formLayout.maxComboboxWidth
+                SegmentedControl {
+                    options: [
+                        { text: i18nc("@item:inlistbox Icon spacing", "Small"), value: 1 }, // qmllint disable unqualified
+                        { text: i18nc("@item:inlistbox Icon spacing", "Normal"), value: 2 }, // qmllint disable unqualified
+                        { text: i18nc("@item:inlistbox Icon spacing", "Large"), value: 6 } // qmllint disable unqualified
+                    ]
+                    currentValue: iconsPage.cfg_iconSpacing
+                    onActivated: value => iconsPage.cfg_iconSpacing = value
+                }
+            }
 
-                textRole: "text"
-                valueRole: "value"
+            QQC2.Label {
+                Layout.fillWidth: true
+                visible: Kirigami.Settings.tabletMode
+                text: i18nc("@info:usagetip when Touch Mode is on", "Spacing is set to Large automatically in Touch Mode.") // qmllint disable unqualified
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+                font: Kirigami.Theme.smallFont
+            }
+        }
+
+        // ── Layout ──
+        SettingsCard {
+            title: i18nc("@title:group", "Layout") // qmllint disable unqualified
+            iconName: "view-split-left-right"
+
+            SettingRow {
+                title: i18nc("@label Hidden-icons arrow button", "Expander arrow") // qmllint disable unqualified
+                description: i18nc("@info", "The button that opens the popup of hidden icons.") // qmllint disable unqualified
+
+                SegmentedControl {
+                    options: [
+                        { text: i18nc("@item:inlistbox", "Before the icons"), value: true }, // qmllint disable unqualified
+                        { text: i18nc("@item:inlistbox", "Between icons and system group"), value: false } // qmllint disable unqualified
+                    ]
+                    currentValue: iconsPage.cfg_expanderOnLeft
+                    onActivated: value => iconsPage.cfg_expanderOnLeft = value
+                }
+            }
+
+            SettingRow {
+                id: directionRow
 
                 // Evaluate current system state for dynamic labels
                 readonly property bool isRtl: Qt.application.layoutDirection === Qt.RightToLeft
                 readonly property bool isVertical: Plasmoid.formFactor === PlasmaCore.Types.Vertical
 
-                model: {
-                    if (isVertical) {
-                        // Vertical default is arrow at bottom, expanding upwards
-                        return [
-                            { "text": i18n("Bottom-to-top"), "value": false },
-                            { "text": i18n("Top-to-bottom"), "value": true }
-                        ];
-                    } else if (isRtl) {
-                        // RTL default is arrow on left, expanding to the right
-                        return [
-                            { "text": i18n("Left-to-right"), "value": false },
-                            { "text": i18n("Right-to-left"), "value": true }
-                        ];
-                    } else {
+                title: i18nc("@label Which direction system tray icons in the Panel emerge from the expander arrow", "Direction") // qmllint disable unqualified
+                description: i18nc("@info", "Which way the tray fills.") // qmllint disable unqualified
+
+                SegmentedControl {
+                    options: {
+                        if (directionRow.isVertical) {
+                            // Vertical default is arrow at bottom, expanding upwards
+                            return [
+                                { text: i18n("Bottom-to-top"), value: false }, // qmllint disable unqualified
+                                { text: i18n("Top-to-bottom"), value: true } // qmllint disable unqualified
+                            ];
+                        } else if (directionRow.isRtl) {
+                            // RTL default is arrow on left, expanding to the right
+                            return [
+                                { text: i18n("Left-to-right"), value: false }, // qmllint disable unqualified
+                                { text: i18n("Right-to-left"), value: true } // qmllint disable unqualified
+                            ];
+                        }
                         // Standard LTR default is arrow on right, expanding to the left
                         return [
-                            { "text": i18n("Right-to-left"), "value": false },
-                            { "text": i18n("Left-to-right"), "value": true }
+                            { text: i18n("Right-to-left"), value: false }, // qmllint disable unqualified
+                            { text: i18n("Left-to-right"), value: true } // qmllint disable unqualified
                         ];
                     }
+                    currentValue: iconsPage.cfg_reverseIconOrder
+                    onActivated: value => iconsPage.cfg_reverseIconOrder = value
                 }
-
-                currentIndex: iconsPage.cfg_reverseIconOrder ? 1 : 0
-                onActivated: iconsPage.cfg_reverseIconOrder = currentValue;
             }
 
-            QQC2.CheckBox {
-                id: expanderLeftCheck
+            SettingRow {
+                title: i18nc("@label Hidden-icons popup", "Icons per row in the popup") // qmllint disable unqualified
+                description: i18nc("@info", "The popup grows to fit its icons, up to this many per row.") // qmllint disable unqualified
 
-                Kirigami.FormData.label: i18nc("@label Hidden-icons arrow button", "Expander arrow:")
-                text: i18nc("@option:check", "Show on the left, before the icons")
-                checked: iconsPage.cfg_expanderOnLeft
-                onToggled: iconsPage.cfg_expanderOnLeft = checked
+                QQC2.SpinBox {
+                    from: 3
+                    to: 10
+                    value: iconsPage.cfg_popupColumns
+                    onValueModified: iconsPage.cfg_popupColumns = value
+                }
+            }
+        }
+
+        // ── Behaviour ──
+        SettingsCard {
+            title: i18nc("@title:group", "Arranging icons") // qmllint disable unqualified
+            iconName: "view-sort-ascending"
+
+            SettingRow {
+                title: i18nc("@label Tray icon order", "Order") // qmllint disable unqualified
+                description: iconsPage.cfg_autoSort
+                    ? i18nc("@info", "Icons are sorted by category, then name.") // qmllint disable unqualified
+                    : i18nc("@info", "Drag icons to arrange them. Drag between the panel and the arrow's popup to pin or unpin.") // qmllint disable unqualified
+
+                SegmentedControl {
+                    options: [
+                        { text: i18nc("@item:inlistbox", "Manual"), value: false }, // qmllint disable unqualified
+                        { text: i18nc("@item:inlistbox", "Automatic"), value: true } // qmllint disable unqualified
+                    ]
+                    currentValue: iconsPage.cfg_autoSort
+                    onActivated: value => iconsPage.cfg_autoSort = value
+                }
             }
 
-            QQC2.CheckBox {
-                id: autoSortCheck
+            SettingRow {
+                title: i18nc("@option:check, This is referring to system tray entries", "Show every icon in the panel") // qmllint disable unqualified
+                description: i18nc("@info", "Nothing is kept in the popup.") // qmllint disable unqualified
 
-                Kirigami.FormData.label: i18nc("@label Tray icon order", "Icon order:")
-                text: i18nc("@option:check", "Sort icons automatically")
-                checked: iconsPage.cfg_autoSort
-                onToggled: iconsPage.cfg_autoSort = checked
-
-                QQC2.ToolTip.visible: hovered
-                QQC2.ToolTip.text: i18nc("@info:tooltip", "When off, drag icons to arrange them yourself, and drag them between the panel and the arrow's popup to pin or unpin them.")
+                QQC2.Switch {
+                    checked: iconsPage.cfg_showAllItems
+                    onToggled: iconsPage.cfg_showAllItems = checked
+                }
             }
+        }
 
-            QQC2.SpinBox {
-                id: popupColumnsSpin
-
-                Kirigami.FormData.label: i18nc("@label:spinbox Hidden-icons popup", "Icons per row in popup:")
-                from: 3
-                to: 10
-                value: iconsPage.cfg_popupColumns
-                onValueModified: iconsPage.cfg_popupColumns = value
-            }
+        // ── Apps and services ──
+        SettingsCard {
+            title: i18nc("@title:group", "Apps and services") // qmllint disable unqualified
+            iconName: "applications-system"
 
             QQC2.Label {
-                visible: Kirigami.Settings.tabletMode
-                text: i18nc("@info:usagetip under a combobox when Touch Mode is on", "Automatically set to Large when in Touch Mode")
+                Layout.fillWidth: true
+                text: i18nc("@info", "Pinned icons stay in the panel. Dynamic icons live in the popup and move to the panel by themselves when they have something to show, such as a new notification. If you move one back to the popup it returns the next time it has news; turn Dynamic off to keep it in the popup.") // qmllint disable unqualified
                 textFormat: Text.PlainText
+                wrapMode: Text.Wrap
                 font: Kirigami.Theme.smallFont
+                opacity: 0.8
             }
-        }
-    }
 
-    view: ListView {
-        id: itemsList
+            Kirigami.SearchField {
+                Layout.fillWidth: true
+                onTextChanged: sortFilterProxyModel.filterString = text
+            }
 
-        property real keySequenceColumnWidth: Kirigami.Units.gridUnit
-        readonly property int iconSize: Kirigami.Units.iconSizes.smallMedium
+            ListView {
+                id: itemsList
 
-        clip: true
+                Layout.fillWidth: true
+                Layout.preferredHeight: contentHeight
+                // The whole page scrolls, not this list.
+                interactive: false
 
-        model: KItemModels.KSortFilterProxyModel {
-            id: sortFilterProxyModel
-            filterCaseSensitivity: Qt.CaseInsensitive
-            Component.onCompleted: sourceModel = Plasmoid.configSystemTrayModel // avoid unnecessary binding, it causes loops
-        }
-        reuseItems: true
+                model: KItemModels.KSortFilterProxyModel {
+                    id: sortFilterProxyModel
+                    filterCaseSensitivity: Qt.CaseInsensitive
+                    Component.onCompleted: sourceModel = Plasmoid.configSystemTrayModel // avoid unnecessary binding, it causes loops
+                }
 
-        headerPositioning: ListView.OverlayHeader
-        header: Kirigami.InlineViewHeader {
-            width: itemsList.width
-            text: i18nc("@title:column", "Entries")
-            actions: [
-                Kirigami.Action {
-                    id: showAllCheckBox
-                    text: i18nc("@option:check, This is referring to system tray entries", "Always show all") // qmllint disable unqualified
-                    onToggled: iconsPage.cfg_showAllItems = checked
-                    checked: iconsPage.cfg_showAllItems
-                    displayComponent: QQC2.CheckBox {
-                        horizontalPadding: Kirigami.Units.largeSpacing
-                        text: showAllCheckBox.text
-                        checked: showAllCheckBox.checked
-                        onToggled: showAllCheckBox.toggle()
-                    }
-                },
-                Kirigami.Action {
-                    id: searchAction
-                    property string searchText: ""
-                    displayComponent: Kirigami.SearchField {
-                        onTextChanged: {
-                            // reset currentIndex to avoid passing focus to the currentItem when
-                            // the model updates
-                            itemsList.currentIndex = -1
-                            sortFilterProxyModel.filterString = text
-                        }
+                section {
+                    property: "category"
+                    delegate: Kirigami.ListSectionHeader {
+                        required property string section
+
+                        text: iconsPage.categoryName(section)
+                        width: itemsList.width
                     }
                 }
-            ]
-        }
 
-        section {
-            property: "category"
-            delegate: Kirigami.ListSectionHeader {
-                required property string section
-
-                text: iconsPage.categoryName(section)
-                width: itemsList.width
+                delegate: TrayItemDelegate {}
             }
         }
-
-        delegate: TrayItemDelegate {}
     }
-
-    // Re-add separator line between footer and list view
-    extraFooterTopPadding: true
 
     /*!
     * Delegate representing each system tray item.
     */
-    component TrayItemDelegate: QQC2.ItemDelegate {
+    component TrayItemDelegate: Item {
         id: listItem
 
         required property var applet
@@ -460,129 +607,175 @@ KCMUtils.ScrollViewKCM {
         required property string itemType
 
         width: itemsList.width
-
-        Kirigami.Theme.useAlternateBackgroundColor: true
-
-        // Don't need highlight, hover, or pressed effects
-        highlighted: false
-        hoverEnabled: false
-        down: false
+        implicitHeight: rowLayout.implicitHeight + Kirigami.Units.largeSpacing * 2
 
         readonly property bool isPlasmoid: itemType === "Plasmoid"
         readonly property bool isSystemClusterItem: iconsPage.systemClusterPluginIds.indexOf(itemId) >= 0
 
-        contentItem: FocusScope {
-            implicitHeight: childrenRect.height
-
-            onActiveFocusChanged: if (activeFocus) {
-                listItem.ListView.view.positionViewAtIndex(listItem.index, ListView.Contain);
+        readonly property string originalVisibility: {
+            if (isSystemClusterItem) {
+                return "shown";
+            } else if (iconsPage.cfg_showAllItems || iconsPage.cfg_shownItems.indexOf(itemId) !== -1) {
+                return "shown";
+            } else if (iconsPage.cfg_hiddenItems.indexOf(itemId) !== -1) {
+                return "hidden";
+            } else if ((isPlasmoid && iconsPage.cfg_extraItems.indexOf(itemId) === -1) || (!isPlasmoid && iconsPage.cfg_disabledStatusNotifiers.indexOf(itemId) > -1)) {
+                return "disabled";
+            } else {
+                return "auto";
             }
+        }
+        readonly property string currentVisibility: iconsPage.changedVisibility.has(itemId) ? iconsPage.changedVisibility.get(itemId).replace("-sni", "") : originalVisibility
+        readonly property var parts: iconsPage.visibilityParts(currentVisibility)
+
+        // Remember the last "on" choices so switching an item off and on again
+        // (or Pinned and back to Popup) restores what the person had.
+        property string lastActive: "auto"
+        property bool lastDynamic: true
+
+        // Computed from the value itself rather than from `parts`: this runs
+        // while the row is still being created, before `parts` has a value.
+        function rememberChoices(): void {
+            const p = iconsPage.visibilityParts(currentVisibility);
+            if (p.enabled) {
+                lastActive = currentVisibility;
+                if (p.placement === "popup") {
+                    lastDynamic = p.dynamic;
+                }
+            }
+        }
+        onCurrentVisibilityChanged: rememberChoices()
+        Component.onCompleted: rememberChoices()
+
+        // Network, Volume and Battery are always shown next to the expander
+        // (see systemClusterPluginIds above) — the tray ignores any other
+        // choice for them, so the controls are locked to communicate that
+        // rather than silently discarding a choice made here.
+        readonly property bool locked: isSystemClusterItem || !itemId
+
+        readonly property string summary: {
+            if (isSystemClusterItem) {
+                return i18nc("@info:usagetip", "Always shown next to the arrow, as part of the system group"); // qmllint disable unqualified
+            }
+            if (!parts.enabled) {
+                return i18nc("@info:usagetip", "Switched off"); // qmllint disable unqualified
+            }
+            if (iconsPage.cfg_showAllItems) {
+                return i18nc("@info:usagetip", "Shown in the panel"); // qmllint disable unqualified
+            }
+            if (parts.placement === "pinned") {
+                return i18nc("@info:usagetip", "Pinned: always in the panel"); // qmllint disable unqualified
+            }
+            return parts.dynamic
+                ? i18nc("@info:usagetip", "In the popup — moves to the panel when it has something to show") // qmllint disable unqualified
+                : i18nc("@info:usagetip", "Always in the popup"); // qmllint disable unqualified
+        }
+
+        function setVisibility(value: string): void {
+            if (value !== originalVisibility) {
+                if (value === "disabled" && !isPlasmoid) {
+                    disablingSniMessage.showWithAppName(nameLabel.text);
+                }
+                iconsPage.changedVisibility.set(itemId, value + (isPlasmoid ? "" : "-sni"));
+            } else {
+                iconsPage.changedVisibility.delete(itemId);
+            }
+            iconsPage.changedVisibilityChanged();
+        }
+
+        ColumnLayout {
+            id: rowLayout
+            anchors {
+                left: parent.left
+                right: parent.right
+                verticalCenter: parent.verticalCenter
+            }
+            spacing: Kirigami.Units.smallSpacing
 
             RowLayout {
-                width: parent.width
-                spacing: Kirigami.Units.smallSpacing
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.largeSpacing
 
                 Kirigami.Icon {
-                    implicitWidth: itemsList.iconSize
-                    implicitHeight: itemsList.iconSize
+                    implicitWidth: Kirigami.Units.iconSizes.medium
+                    implicitHeight: Kirigami.Units.iconSizes.medium
                     source: listItem.decoration
                     animated: false
+                    opacity: listItem.parts.enabled ? 1 : 0.5
                 }
 
-                QQC2.Label {
-                    id: nameLabel
+                ColumnLayout {
                     Layout.fillWidth: true
-                    maximumLineCount: 1
-                    text: listItem.displayText
-                    textFormat: Text.PlainText
-                    elide: Text.ElideRight
+                    spacing: 0
 
-                    QQC2.ToolTip {
-                        visible: listItem.hovered && nameLabel.truncated
-                        text: nameLabel.text
+                    QQC2.Label {
+                        id: nameLabel
+                        Layout.fillWidth: true
+                        maximumLineCount: 1
+                        text: listItem.displayText
+                        textFormat: Text.PlainText
+                        elide: Text.ElideRight
+                        opacity: listItem.parts.enabled ? 1 : 0.6
+                    }
+                    QQC2.Label {
+                        Layout.fillWidth: true
+                        text: listItem.summary
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
+                        font: Kirigami.Theme.smallFont
+                        opacity: 0.7
                     }
                 }
 
-                QQC2.ComboBox {
-                    id: visibilityComboBox
-
-                    readonly property string currentVisibility: iconsPage.changedVisibility.has(listItem.itemId) ? iconsPage.changedVisibility.get(listItem.itemId).replace("-sni", "") : originalVisibility
-                    readonly property string originalVisibility: {
-                        if (listItem.isSystemClusterItem) {
-                            return "shown";
-                        } else if (iconsPage.cfg_showAllItems || iconsPage.cfg_shownItems.indexOf(listItem.itemId) !== -1) {
-                            return "shown";
-                        } else if (iconsPage.cfg_hiddenItems.indexOf(listItem.itemId) !== -1) {
-                            return "hidden";
-                        } else if ((listItem.isPlasmoid && iconsPage.cfg_extraItems.indexOf(listItem.itemId) === -1) || (!listItem.isPlasmoid && iconsPage.cfg_disabledStatusNotifiers.indexOf(listItem.itemId) > -1)) {
-                            return "disabled";
-                        } else {
-                            return "auto";
-                        }
-                    }
-
-                    implicitContentWidthPolicy: QQC2.ComboBox.WidestText
-
-                    // Network, Volume and Battery are always shown next to
-                    // the expander (see systemClusterPluginIds above) — the
-                    // tray ignores any other choice for them, so the control
-                    // is locked to communicate that rather than silently
-                    // discarding a choice the person makes here.
-                    enabled: !iconsPage.cfg_showAllItems && listItem.itemId && !listItem.isSystemClusterItem
-                    textRole: "text"
-                    valueRole: "value"
-
-                    currentIndex: {
-                        for (let i = 0; i < model.length; i++) {
-                            if (model[i].value === currentVisibility) {
-                                return i;
-                            }
-                        }
-
-                        return 0;
-                    }
-                    model: iconsPage.comboBoxModel
-
-                    onActivated: index => {
-                        if (currentValue !== originalVisibility) {
-                            if (currentValue === "disabled" && !listItem.isPlasmoid) {
-                                disablingSniMessage.showWithAppName(nameLabel.text);
-                            }
-                            iconsPage.changedVisibility.set(listItem.itemId, currentValue + (listItem.isPlasmoid ? "" : "-sni"));
-                        } else {
-                            iconsPage.changedVisibility.delete(listItem.itemId);
-                        }
-                        iconsPage.changedVisibilityChanged();
-                    }
+                QQC2.Switch {
+                    id: enabledSwitch
+                    enabled: !listItem.locked
+                    checked: listItem.parts.enabled
+                    onToggled: listItem.setVisibility(checked ? listItem.lastActive : "disabled")
 
                     QQC2.ToolTip {
                         visible: listItem.isSystemClusterItem && parent.hovered
                         text: i18nc("@info:tooltip", "Always shown next to the expander as part of the system cluster") // qmllint disable unqualified
                     }
                 }
+            }
+
+            // A Flow, not a row: on a narrow window the controls wrap onto
+            // another line instead of running off the edge of the page.
+            Flow {
+                Layout.fillWidth: true
+                Layout.leftMargin: Kirigami.Units.iconSizes.medium + Kirigami.Units.largeSpacing
+                spacing: Kirigami.Units.largeSpacing
+                enabled: listItem.parts.enabled && !listItem.locked
+                opacity: listItem.parts.enabled ? 1 : 0.5
+
+                SegmentedControl {
+                    // With "show every icon" on, everything is in the panel
+                    enabled: !iconsPage.cfg_showAllItems
+                    options: [
+                        { text: i18nc("@item:inlistbox", "Pinned"), value: "pinned" }, // qmllint disable unqualified
+                        { text: i18nc("@item:inlistbox", "Popup"), value: "popup" } // qmllint disable unqualified
+                    ]
+                    currentValue: iconsPage.cfg_showAllItems ? "pinned" : listItem.parts.placement
+                    onActivated: value => listItem.setVisibility(iconsPage.visibilityFrom(true, value, listItem.lastDynamic))
+                }
+
+                QQC2.Switch {
+                    text: i18nc("@option:check Dynamic tray icon", "Dynamic") // qmllint disable unqualified
+                    enabled: !iconsPage.cfg_showAllItems && listItem.parts.placement === "popup"
+                    checked: listItem.parts.dynamic
+                    onToggled: listItem.setVisibility(iconsPage.visibilityFrom(true, "popup", checked))
+
+                    QQC2.ToolTip.visible: hovered
+                    QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                    QQC2.ToolTip.text: i18nc("@info:tooltip", "Dynamic icons move to the panel by themselves when they have something to show, like a new notification. If you move one to the popup it comes back the next time it has news. Turn this off to keep it in the popup.") // qmllint disable unqualified
+                }
 
                 KQC.KeySequenceItem {
                     id: keySequenceItem
-                    Layout.minimumWidth: itemsList.keySequenceColumnWidth
-                    Layout.preferredWidth: itemsList.keySequenceColumnWidth
-
-                    // We want to keep the column the same size for all items,
-                    // but only when not inputting a new shortcut, as the length
-                    // of the shortcut may vary quite a bit while inputting. So
-                    // rather than binding to widthChanged, we update the maximum
-                    // column width only at specific moments: When the item is
-                    // first added, or when we know the shortcut has changed and
-                    // no further input happens.
-                    function updateColumnWidth() {
-                        itemsList.keySequenceColumnWidth = Math.max(implicitWidth, itemsList.keySequenceColumnWidth);
-                    }
-
-                    // Delay this one tick to make sure the item has finished
-                    // any layout that still needs to be done.
-                    Component.onCompleted: Qt.callLater(updateColumnWidth)
 
                     visible: listItem.isPlasmoid
-                    enabled: visibilityComboBox.currentValue !== "disabled"
+                    enabled: listItem.parts.enabled
                     readonly property string originalKeySequence: listItem.applet ? listItem.applet.plasmoid.globalShortcut : ""
                     keySequence: iconsPage.changedShortcuts.has(listItem.applet?.plasmoid) ? iconsPage.changedShortcuts.get(listItem.applet?.plasmoid) : originalKeySequence
 
@@ -594,16 +787,8 @@ KCMUtils.ScrollViewKCM {
                                 iconsPage.changedShortcuts.delete(listItem.applet.plasmoid);
                             }
                             iconsPage.changedShortcutsChanged();
-
-                            updateColumnWidth()
                         }
                     }
-                }
-                // Placeholder for when KeySequenceItem is not visible
-                Item {
-                    Layout.minimumWidth: itemsList.keySequenceColumnWidth
-                    Layout.maximumWidth: itemsList.keySequenceColumnWidth
-                    visible: !keySequenceItem.visible
                 }
 
                 QQC2.Button {
@@ -622,6 +807,12 @@ KCMUtils.ScrollViewKCM {
                         text: parent.Accessible.name.replace(/&(?=\S)/g, "")
                     }
                 }
+            }
+
+            Kirigami.Separator {
+                Layout.fillWidth: true
+                Layout.topMargin: Kirigami.Units.smallSpacing
+                opacity: 0.5
             }
         }
     }

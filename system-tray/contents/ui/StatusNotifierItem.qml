@@ -12,13 +12,17 @@ import org.kde.kirigami as Kirigami
 import org.kde.plasma.core as PlasmaCore
 import org.kde.plasma.plasmoid
 
+import "js/safetext.js" as SafeText
+
 AbstractItem {
     id: taskIcon
 
     itemId: model?.Id ?? ""
     text: model?.Title || model?.ToolTipTitle || ""
-    mainText: inVisibleLayout || (model?.ToolTipTitle !== "" && model?.ToolTipTitle !== text) ? model?.ToolTipTitle ?? "" : ""
-    subText: model?.ToolTipSubTitle ?? ""
+    // These strings come from the application: strip anything but plain formatting
+    // so a tooltip can't load images/URLs (see js/safetext.js).
+    mainText: inVisibleLayout || (model?.ToolTipTitle !== "" && model?.ToolTipTitle !== text) ? SafeText.sanitizeMarkup(model?.ToolTipTitle) : ""
+    subText: SafeText.sanitizeMarkup(model?.ToolTipSubTitle)
     textFormat: Text.AutoText
     active: inVisibleLayout || text != mainText || subText.length > 0
 
