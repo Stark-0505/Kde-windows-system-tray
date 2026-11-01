@@ -47,7 +47,10 @@ Lib.Tile {
 
     onClicked: {
         if (tile.blockSleep) {
-            execOnce.run("pkill -f " + tile.blockerName);
+            // Stop exactly the inhibitor this tile started (and its "sleep infinity"
+            // child, which used to be left running every time). `pkill -f NAME` on
+            // its own matched ANY process whose command line mentioned the name.
+            execOnce.run("for p in $(pgrep -f '^systemd-inhibit --what=idle:sleep --who=" + tile.blockerName + "'); do pkill -P $p; kill $p; done");
             tile.blockSleep = false;
         } else {
             execOnce.run("systemd-inhibit --what=idle:sleep --who=\"" + tile.blockerName + "\" --why=\"Inhibited by user\" sleep infinity &");

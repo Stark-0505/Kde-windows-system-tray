@@ -17,11 +17,15 @@ import org.kde.ksvg as KSvg
 import org.kde.plasma.core as PlasmaCore
 import org.kde.plasma.plasmoid
 
+import "js/trayorder.js" as TrayOrder
+
 ContainmentItem {
     id: root
 
     readonly property bool vertical: Plasmoid.formFactor === PlasmaCore.Types.Vertical
     readonly property bool reverseLayout: Plasmoid.configuration.reverseIconOrder
+    // Windows-style: the expander arrow leads the tray (before the icons).
+    readonly property bool expanderLeading: Plasmoid.configuration.expanderOnLeft
 
     // The Windows 11–style system cluster: Network, Volume and Battery.
     // This is the single QML source of truth for the three plugin ids —
@@ -49,6 +53,271 @@ ContainmentItem {
     readonly property bool oneRowOrColumn: tasksGrid.rowsOrColumns === 1
 
     readonly property alias hiddenModel: hiddenModel
+
+    // The item the popup window is positioned against (centred on). Normally
+    // the whole tray; for the hidden-icons popup (and popups of hidden icons)
+    // it is the expander arrow, so the popup opens centred right above it.
+    // Only updated while the popup is open, so it doesn't jump while closing.
+    property Item popupAnchor: root
+
+    function updatePopupAnchor() {
+        if (!systemTrayState.expanded) {
+            return; // keep the last anchor while the popup closes
+        }
+        const applet = systemTrayState.activeApplet;
+        const fromHiddenApplet = !!applet && !!applet.parent && applet.parent.inVisibleLayout === false;
+        popupAnchor = ((systemTrayState.hiddenItemsRequested || fromHiddenApplet) && expander.visible) ? expander : root;
+    }
+
+    // ───────────── Switching between popups ─────────────
+    // Pressing a control on the panel takes focus from the popup, and
+    // hideOnWindowDeactivate would then close it just before the click
+    // switches it to the new content, so clicking one popup's button while
+    // another is open made it vanish (or close and re-open). While the pointer
+    // is over a control that manages the popup (the arrow, or a plasmoid icon
+    // including the system group) a focus loss must not close it; the click
+    // handler switches it instead, with a transition.
+    property int popupControlHovers: 0
+
+    function popupControlHoverChanged(hovered) {
+        popupControlHovers = Math.max(0, popupControlHovers + (hovered ? 1 : -1));
+        if (popupControlHovers === 0) {
+            inactivePopupGuard.restart();
+        }
+        if (hovered) {
+            // A click is probably coming: photograph the popup as it is now, so
+            // the ghost of the old one shows exactly what was on screen.
+            popupGhost.capture();
+        }
+    }
+
+    // After switching, give the popup focus again so clicking elsewhere closes
+    // it as usual.
+    function refocusPopup() {
+        if (systemTrayState.expanded) {
+            Qt.callLater(() => dialog.requestActivate());
+        }
+    }
+
+    // Safety net: if the pointer has left the controls and the popup still
+    // doesn't have focus (so nothing would ever close it), close it.
+    Timer {
+        id: inactivePopupGuard
+        interval: 250
+        onTriggered: {
+            if (systemTrayState.expanded && dialog.visible && !dialog.active
+                    && !Plasmoid.configuration.pin && root.popupControlHovers === 0) {
+                systemTrayState.expanded = false;
+            }
+        }
+    }
+
+    // ───────────── Drag & drop: reorder, pin and unpin icons ─────────────
+    // An icon is dragged with the DragHandler in AbstractItem, which reports
+    // the pointer in GLOBAL (screen) coordinates. That lets this one
+    // controller hit-test both the panel and the hidden-icons popup, which are
+    // separate windows. See js/trayorder.js for the (unit-tested) list logic.
+    readonly property bool manualOrder: !Plasmoid.configuration.autoSort
+    property bool dragActive: false
+    property string dragItemId: ""
+    property bool dragFromHidden: false      // the drag started in the popup
+    property string dropZone: "none"         // "panel" | "popup" | "arrow" | "none"
+    property int dropSlot: -1                // insertion slot within the drop zone (manual order only)
+    property rect panelIndicator: Qt.rect(0, 0, 0, 0)
+    property real dragGlobalX: 0
+    property real dragGlobalY: 0
+    property url dragGhostUrl: ""
+    property size dragGhostSize: Qt.size(0, 0)
+
+    // Ids of the icons currently in a zone, in display order, read straight
+    // from the (sorted) tray model so it works even while the popup is closed.
+    function trayIds(zone) {
+        const m = Plasmoid.systemTrayModel;
+        const idRole = nonClusterModel.filterRole;      // role of "itemId"
+        const statusRole = hiddenModel.filterRole;      // role of "effectiveStatus"
+        const wanted = zone === "panel" ? PlasmaCore.Types.ActiveStatus : PlasmaCore.Types.PassiveStatus;
+        const ids = [];
+        for (let i = 0; i < m.rowCount(); ++i) {
+            const idx = m.index(i, 0);
+            if (m.data(idx, statusRole) !== wanted) {
+                continue;
+            }
+            const id = m.data(idx, idRole);
+            if (zone === "panel" && systemClusterPluginIds.indexOf(id) >= 0) {
+                continue;
+            }
+            ids.push(id);
+        }
+        return ids;
+    }
+
+    function pointInside(item, gx, gy) {
+        const p = item.mapFromGlobal(gx, gy);
+        return p.x >= 0 && p.y >= 0 && p.x < item.width && p.y < item.height;
+    }
+
+    // True when model order runs against the +x / +y axis of tasksGrid
+    // (mirrored horizontal layout, or bottom-to-top vertical layout).
+    function panelFlipped() {
+        return root.vertical ? tasksGrid.verticalLayoutDirection === GridView.BottomToTop
+                             : tasksGrid.effectiveLayoutDirection === Qt.RightToLeft;
+    }
+
+    // Insertion slot (0..count) in the panel's icon row for a global point.
+    function panelSlotAt(gx, gy) {
+        const n = tasksGrid.count;
+        const p = tasksGrid.mapFromGlobal(gx, gy);
+        const flip = panelFlipped();
+        const centers = [];
+        for (let i = 0; i < n; ++i) {
+            const d = tasksGrid.itemAtIndex(i);
+            if (!d) {
+                return -1;
+            }
+            // Delegate x/y are CONTENT coordinates; in a mirrored (or
+            // bottom-to-top) grid contentX/Y is non-zero, so convert to the
+            // grid's own coordinates, which is what the pointer position uses.
+            const c = root.vertical ? (d.y - tasksGrid.contentY) + d.height / 2
+                                    : (d.x - tasksGrid.contentX) + d.width / 2;
+            centers.push(flip ? -c : c);
+        }
+        const pos = root.vertical ? p.y : p.x;
+        return TrayOrder.slotForPosition(centers, flip ? -pos : pos);
+    }
+
+    // The drop line for a panel slot, in root coordinates.
+    function panelIndicatorFor(slot) {
+        const n = tasksGrid.count;
+        if (n === 0 || slot < 0) {
+            return Qt.rect(0, 0, 0, 0);
+        }
+        const atEnd = slot >= n;
+        const d = tasksGrid.itemAtIndex(atEnd ? n - 1 : slot);
+        if (!d) {
+            return Qt.rect(0, 0, 0, 0);
+        }
+        // The edge of icon d that faces the insertion point.
+        const leading = (!atEnd) !== panelFlipped();
+        const origin = tasksGrid.mapToItem(root, 0, 0);
+        const t = 2;
+        const inset = Kirigami.Units.smallSpacing;
+        if (root.vertical) {
+            const top = d.y - tasksGrid.contentY;
+            const edge = leading ? top : top + d.height;
+            return Qt.rect(inset, origin.y + edge - t / 2, root.width - inset * 2, t);
+        }
+        const left = d.x - tasksGrid.contentX;
+        const edge = leading ? left : left + d.width;
+        return Qt.rect(origin.x + edge - t / 2, inset, t, root.height - inset * 2);
+    }
+
+    function beginDrag(item, fromHidden) {
+        dragItemId = item.itemId;
+        dragFromHidden = fromHidden;
+        dropZone = "none";
+        dropSlot = -1;
+        dragGhostUrl = "";
+        dragGhostSize = Qt.size(item.iconContainer.width, item.iconContainer.height);
+        dragActive = true;
+        // A snapshot of the icon follows the pointer (the real one is dimmed).
+        item.iconContainer.grabToImage(result => {
+            if (root.dragActive) {
+                root.dragGhostUrl = result.url;
+            }
+        });
+    }
+
+    function updateDrag(gx, gy) {
+        if (!dragActive) {
+            return;
+        }
+        dragGlobalX = gx;
+        dragGlobalY = gy;
+        const fromZone = dragFromHidden ? "popup" : "panel";
+        let zone = "none";
+        let slot = -1;
+        if (systemTrayState.hiddenItemsShowing && hiddenLayout.visible && pointInside(hiddenLayout, gx, gy)) {
+            zone = "popup";
+            if (manualOrder) {
+                const p = hiddenLayout.mapFromGlobal(gx, gy);
+                slot = expandedRepresentation.hiddenGrid.slotAt(p.x, p.y);
+            }
+        } else if (expander.visible && pointInside(expander, gx, gy)) {
+            zone = "arrow";
+        } else if (pointInside(root, gx, gy) && !pointInside(systemClusterContainer, gx, gy)) {
+            zone = "panel";
+            if (manualOrder) {
+                slot = panelSlotAt(gx, gy);
+            }
+        }
+        // Moving between panel and popup edits the pinned lists, which do
+        // nothing while "show all items" is on.
+        const crossing = zone === "arrow" || (zone !== "none" && zone !== fromZone);
+        if (crossing && Plasmoid.configuration.showAllItems) {
+            zone = "none";
+            slot = -1;
+        }
+        // Pointer moves are frequent: only touch anything when the target changed.
+        if (zone !== dropZone || slot !== dropSlot) {
+            dropZone = zone;
+            dropSlot = slot;
+            panelIndicator = (zone === "panel" && slot >= 0) ? panelIndicatorFor(slot) : Qt.rect(0, 0, 0, 0);
+        }
+    }
+
+    function endDrag() {
+        if (!dragActive) {
+            return;
+        }
+        const id = dragItemId;
+        const fromZone = dragFromHidden ? "popup" : "panel";
+        const zone = dropZone;
+        const slot = dropSlot;
+        dragActive = false;
+        dropZone = "none";
+        dropSlot = -1;
+        dragGhostUrl = "";
+        panelIndicator = Qt.rect(0, 0, 0, 0);
+        // Let the pointer handler finish before the model reshuffles under it.
+        Qt.callLater(() => root.commitDrop(id, fromZone, zone, slot));
+    }
+
+    function commitDrop(id, fromZone, zone, slot) {
+        if (zone === "none" || !id) {
+            return;
+        }
+        // Dropping on the arrow means "the other zone": unpin from the panel,
+        // or pin from the popup.
+        const toZone = zone === "arrow" ? (fromZone === "panel" ? "popup" : "panel") : zone;
+        const crossing = toZone !== fromZone;
+        if (!crossing && (!manualOrder || slot < 0)) {
+            return; // plain reorder, but automatic sorting is on
+        }
+        if (manualOrder) {
+            const oldOrder = Plasmoid.configuration.itemOrder;
+            const order = TrayOrder.newOrder(trayIds("panel"), trayIds("popup"), id, fromZone, toZone,
+                                             zone === "arrow" ? -1 : slot, oldOrder);
+            if (!TrayOrder.sameList(order, oldOrder)) {
+                Plasmoid.configuration.itemOrder = order;
+            }
+        }
+        if (crossing) {
+            const cfg = Plasmoid.configuration;
+            const lists = toZone === "panel"
+                ? TrayOrder.pin(cfg.shownItems, cfg.hiddenItems, cfg.dismissedItems, id)
+                : TrayOrder.unpin(cfg.shownItems, cfg.hiddenItems, cfg.dismissedItems, id);
+            // Each write is a config save plus a model refresh: skip the lists that didn't change.
+            if (!TrayOrder.sameList(lists.shown, cfg.shownItems)) {
+                cfg.shownItems = lists.shown;
+            }
+            if (!TrayOrder.sameList(lists.hidden, cfg.hiddenItems)) {
+                cfg.hiddenItems = lists.hidden;
+            }
+            if (!TrayOrder.sameList(lists.dismissed, cfg.dismissedItems)) {
+                cfg.dismissedItems = lists.dismissed;
+            }
+        }
+    }
 
     Component.onCompleted: {
         // We need all the plasmoiditems to be there for correct working of shortcuts.
@@ -231,6 +500,44 @@ ContainmentItem {
         CurrentItemHighLight {
             location: Plasmoid.location
             parent: root
+            hiddenPopupAnchor: expander
+        }
+
+        Connections {
+            target: systemTrayState
+
+            function onExpandedChanged() { root.updatePopupAnchor(); }
+            function onHiddenItemsRequestedChanged() { root.updatePopupAnchor(); root.refocusPopup(); }
+            function onActiveAppletChanged() { root.updatePopupAnchor(); root.refocusPopup(); }
+        }
+
+        // Drop line shown between icons while dragging (white on dark themes).
+        Rectangle {
+            z: 900
+            enabled: false
+            visible: root.dragActive && root.dropZone === "panel" && root.dropSlot >= 0
+            x: root.panelIndicator.x
+            y: root.panelIndicator.y
+            width: root.panelIndicator.width
+            height: root.panelIndicator.height
+            radius: 1
+            color: Kirigami.Theme.textColor
+        }
+
+        // The dragged icon, following the pointer.
+        Image {
+            id: dragGhost
+            z: 1000
+            enabled: false
+            visible: root.dragActive && source != ""
+            source: root.dragGhostUrl
+            width: root.dragGhostSize.width
+            height: root.dragGhostSize.height
+            opacity: 0.85
+            x: visible ? mapFromGlobalX() : 0
+            y: visible ? mapFromGlobalY() : 0
+            function mapFromGlobalX() { return parent.mapFromGlobal(root.dragGlobalX, root.dragGlobalY).x - width / 2; }
+            function mapFromGlobalY() { return parent.mapFromGlobal(root.dragGlobalX, root.dragGlobalY).y - height / 2; }
         }
 
         DnD.DropArea {
@@ -296,8 +603,11 @@ ContainmentItem {
                 // orientation this ordering is instead handled by
                 // LayoutMirroring (see root.LayoutMirroring above), so both
                 // tasksGrid and systemCluster keep fixed columns 0 and 2.
-                Layout.row: root.vertical ? (root.reverseLayout ? 2 : 0) : 0
-                Layout.column: 0
+                // With expanderLeading the arrow takes the first slot and the
+                // icons the middle one; otherwise the arrow sits between the
+                // icons and the cluster (original layout).
+                Layout.row: root.vertical ? (root.expanderLeading ? 1 : (root.reverseLayout ? 2 : 0)) : 0
+                Layout.column: (!root.vertical && root.expanderLeading) ? 1 : 0
 
                 Layout.alignment: Qt.AlignCenter
 
@@ -308,13 +618,14 @@ ContainmentItem {
                 verticalLayoutDirection: (root.vertical && root.reverseLayout) ? GridView.BottomToTop : GridView.TopToBottom
 
                 // The icon size to display when not using the auto-scaling setting
-                readonly property int smallIconSize: 34
+                readonly property int smallIconSize: Plasmoid.configuration.iconSize
 
                 readonly property bool autoSize: Plasmoid.configuration.scaleIconsToFit
 
                 readonly property int gridThickness: root.vertical ? root.width : root.height
-                // Should change to 2 rows/columns on a 56px panel (in standard DPI)
-                readonly property int rowsOrColumns: autoSize ? 1 : Math.max(1, Math.min(count, Math.floor(gridThickness / (smallIconSize + Kirigami.Units.smallSpacing))))
+                // Always a single row/column: this is a Windows-style tray strip,
+                // and a user-chosen icon size shouldn't make it wrap onto two rows.
+                readonly property int rowsOrColumns: 1
 
                 // Add margins only if the panel is larger than a small icon (to avoid large gaps between tiny icons)
                 readonly property int cellSpacing: Kirigami.Units.smallSpacing * Plasmoid.configuration.iconSpacing
@@ -379,14 +690,54 @@ ContainmentItem {
                 // expander no longer needs to move when reverseLayout
                 // flips, only tasksGrid and systemCluster trade places
                 // around it.
-                Layout.row: root.vertical ? 1 : 0
-                Layout.column: root.vertical ? 0 : 1
+                Layout.row: root.vertical ? (root.expanderLeading ? (root.reverseLayout ? 2 : 0) : 1) : 0
+                Layout.column: root.vertical ? 0 : (root.expanderLeading ? 0 : 1)
 
                 Layout.fillWidth: vertical
                 Layout.fillHeight: !vertical
                 Layout.alignment: vertical ? Qt.AlignVCenter : Qt.AlignHCenter
                 iconSize: tasksGrid.itemSize
-                visible: root.hiddenLayout.itemCount > 0
+                // While an icon is being dragged the arrow is always shown, so
+                // there is always somewhere to drop an icon to unpin it.
+                visible: root.hiddenLayout.itemCount > 0 || (root.dragActive && !Plasmoid.configuration.showAllItems)
+
+                HoverHandler {
+                    onHoveredChanged: root.popupControlHoverChanged(hovered)
+                }
+
+                // Drop target highlight: dropping on the arrow pins/unpins.
+                Rectangle {
+                    anchors.fill: parent
+                    anchors.margins: Math.round(Kirigami.Units.smallSpacing / 2)
+                    z: -1
+                    radius: 5
+                    visible: root.dragActive && root.dropZone === "arrow"
+                    color: Kirigami.Theme.textColor
+                    opacity: 0.2
+                }
+
+                // What dropping here will do: a small pin badge when dragging an
+                // icon up from the popup, an unpin badge when dragging one down
+                // from the panel.
+                Rectangle {
+                    z: 1
+                    visible: root.dragActive && root.dropZone === "arrow"
+                    anchors.centerIn: parent
+                    width: Kirigami.Units.iconSizes.small + Kirigami.Units.smallSpacing
+                    height: width
+                    radius: width / 2
+                    color: Kirigami.Theme.backgroundColor
+                    border.width: 1
+                    border.color: Qt.alpha(Kirigami.Theme.textColor, 0.35)
+
+                    Kirigami.Icon {
+                        anchors.centerIn: parent
+                        width: Kirigami.Units.iconSizes.small
+                        height: width
+                        source: root.dragFromHidden ? "window-pin" : "window-unpin"
+                        fallback: "pin"
+                    }
+                }
             }
 
             // The Windows 11–style system cluster: Network, Volume and
@@ -506,6 +857,17 @@ ContainmentItem {
             }
         }
 
+        // Keeps the old popup on screen, sliding down and fading under the new one.
+        PopupGhost {
+            id: popupGhost
+            target: expandedRepresentation
+            mode: expandedRepresentation.modeKey
+            active: systemTrayState.expanded
+            anchorItem: root.popupAnchor
+            mainDialog: dialog
+            animationEnabled: Plasmoid.configuration.popupAnimation
+        }
+
         Timer {
             id: expandedSync
             interval: 100
@@ -516,7 +878,7 @@ ContainmentItem {
         PlasmaCore.AppletPopup {
             id: dialog
             objectName: "popupWindow"
-            visualParent: root
+            visualParent: root.popupAnchor
             popupDirection: switch (Plasmoid.location) {
                 case PlasmaCore.Types.TopEdge:
                     return Qt.BottomEdge
@@ -527,7 +889,9 @@ ContainmentItem {
                 default:
                     return Qt.TopEdge
             }
-            margin: (Plasmoid.containmentDisplayHints & PlasmaCore.Types.ContainmentPrefersFloatingApplets) ? Kirigami.Units.largeSpacing : 0
+            // Every tray popup (Action Panel, hidden icons, applet popups)
+            // floats a small gap above the panel instead of touching it.
+            margin: Kirigami.Units.largeSpacing
 
             Behavior on margin {
                 NumberAnimation {
@@ -541,12 +905,12 @@ ContainmentItem {
 
             floating: Plasmoid.location == PlasmaCore.Desktop
 
-            removeBorderStrategy: Plasmoid.location === PlasmaCore.Types.Floating
-                ? PlasmaCore.AppletPopup.AtScreenEdges
-                : PlasmaCore.AppletPopup.AtScreenEdges | PlasmaCore.AppletPopup.AtPanelEdges
+            // Because the popup floats, keep its full rounded border: only
+            // drop the border where it actually touches a screen edge.
+            removeBorderStrategy: PlasmaCore.AppletPopup.AtScreenEdges
 
 
-            hideOnWindowDeactivate: !Plasmoid.configuration.pin
+            hideOnWindowDeactivate: !Plasmoid.configuration.pin && root.popupControlHovers === 0
             visible: systemTrayState.expanded
             appletInterface: root
 

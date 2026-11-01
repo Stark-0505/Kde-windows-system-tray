@@ -6,7 +6,7 @@
 #  removes the Windows Modern plugin and icon theme files.
 #
 #  Usage:
-#      curl -fsSL https://github.com/RaceConditionWinner/Kde-windows-system-tray/releases/latest/download/uninstall.sh | bash
+#      curl -fsSL https://github.com/Stark-0505/Kde-windows-system-tray/releases/latest/download/uninstall.sh | bash
 #
 #  Safe to run more than once.
 # ──────────────────────────────────────────────────────────────────────────
@@ -84,6 +84,7 @@ var stockId = "${STOCK_PLUGIN}";
 var newId = "${APP_ID}";
 var allPanels = panels();
 var restored = 0;
+var failed = 0;
 for (var i = 0; i < allPanels.length; i++) {
     var panel = allPanels[i];
     var ours = panel.widgets(newId);
@@ -91,11 +92,20 @@ for (var i = 0; i < allPanels.length; i++) {
         var oldIndex = ours[j].index;
         ours[j].remove();
         var w = panel.addWidget(stockId);
-        w.index = oldIndex;
-        restored++;
+        if (w) {
+            w.index = oldIndex;
+            restored++;
+        } else {
+            // Don't leave the panel without a tray: put ours back.
+            var r = panel.addWidget(newId);
+            if (r) { r.index = oldIndex; }
+            failed++;
+        }
     }
 }
-if (restored > 0) {
+if (failed > 0) {
+    print("RESTORE_FAILED:" + failed);
+} else if (restored > 0) {
     print("RESTORED:" + restored);
 } else {
     var stockPresent = false;
@@ -112,6 +122,10 @@ JS
         RESTORED:*)
             PANEL_STATUS="restored"
             info "Restored the stock System Tray on your panel (same position)." ;;
+        RESTORE_FAILED:*)
+            PANEL_STATUS="restore-failed"
+            warn "Plasma refused to add the stock System Tray; the Windows Modern one was left in place."
+            warn "Add the stock System Tray manually, then re-run this uninstaller." ;;
         ALREADY_STOCK)
             PANEL_STATUS="already-stock"
             info "Stock System Tray is already on your panel." ;;
@@ -129,16 +143,10 @@ fi
 
 # ── Remove plugin (needs root) ─────────────────────────────────────────
 info "Removing plugin (requires your password)..."
-TMP_UNINSTALL="$(mktemp /tmp/windowsmodern-systray-uninstall.XXXXXX)"
-cat > "$TMP_UNINSTALL" <<EOF
-#!/bin/bash
-set -e
-rm -f "$PLUGIN_DST"
-rm -rf "$KPACKAGE_DIR"
-EOF
-chmod +x "$TMP_UNINSTALL"
-pkexec bash "$TMP_UNINSTALL" || warn "Could not remove the system plugin file (continuing)."
-rm -f "$TMP_UNINSTALL"
+# No temp script: the commands are fixed, so pass the paths as arguments to
+# an inline script (nothing root executes lives in a user-writable location).
+pkexec bash -c 'set -euo pipefail; rm -f -- "${1:?}"; rm -rf -- "${2:?}"' _ "$PLUGIN_DST" "$KPACKAGE_DIR" \
+    || warn "Could not remove the system plugin file (continuing)."
 
 rm -rf "$HOME/.local/share/plasma/plasmoids/${APP_ID}" 2>/dev/null || true
 rm -f "$HOME/.local/lib64/qt6/plugins/plasma/applets/${APP_ID}.so" 2>/dev/null || true

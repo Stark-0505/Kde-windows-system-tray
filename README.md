@@ -51,6 +51,22 @@
   </tr>
 </table>
 
+### Tray appearance settings
+
+Right-click the tray → **Configure System Tray…** → General:
+
+- **Icon size** — a slider (12–48 px) instead of fixed sizes; it also sets the icon size in the hidden-icons popup. Choose "Scale with Panel height" to have it follow the panel instead.
+- **Expander arrow** — shown on the left, before the icons (Windows style), or between the icons and the system cluster.
+- **Icons per row in popup** — the hidden-icons popup is a compact, icon-only grid that sizes itself to the number of icons (names appear as tooltips).
+- The popup highlight is a flat rounded box on the icon or arrow that opened it, rather than the theme's sliding tab indicator.
+
+### Arranging, pinning and unpinning icons
+
+- **Drag an icon** (in the panel or in the arrow's popup) to rearrange it. The icon you are dragging is dimmed, a copy follows the pointer, and a line shows where it will land.
+- **Pin** an icon by dragging it from the popup onto the panel (or onto the arrow). **Unpin** it by dragging it onto the arrow, or into the popup.
+- **Icon order** (settings): leave "Sort icons automatically" off (the default) to keep your own order, or turn it on to sort by category and name. Your manual order is remembered while automatic sorting is on.
+- The system group (network, volume, battery) stays where it is.
+
 <br>
 
 ## 📦 Installation
@@ -58,7 +74,7 @@
 ### ⭐ Recommended — one-command install
 
 ```bash
-curl -fsSL https://github.com/RaceConditionWinner/Kde-windows-system-tray/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/Stark-0505/Kde-windows-system-tray/releases/latest/download/install.sh | bash
 ```
 
 This automatically:
@@ -78,7 +94,7 @@ For other distros, or if you'd rather build from source.
 1. Install build dependencies (Fedora shown; see [system-tray/BUILD.md](system-tray/BUILD.md) for Arch/Debian/Ubuntu):
    ```bash
    sudo dnf install gcc-c++ cmake extra-cmake-modules \
-     qt6-qtbase-devel qt6-qtdeclarative-devel \
+     qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtquickcontrols2-devel \
      kf6-kpackage-devel kf6-kconfig-devel kf6-ki18n-devel kf6-kcoreaddons-devel \
      kf6-kwindowsystem-devel kf6-kio-devel kf6-kiconthemes-devel \
      kf6-kitemmodels-devel kf6-kservice-devel kf6-kxmlgui-devel \
@@ -87,7 +103,7 @@ For other distros, or if you'd rather build from source.
    ```
 2. Clone this repository:
    ```bash
-   git clone https://github.com/RaceConditionWinner/Kde-windows-system-tray.git
+   git clone https://github.com/Stark-0505/Kde-windows-system-tray.git
    cd Kde-windows-system-tray
    ```
 3. Build and install:
@@ -102,19 +118,39 @@ For other distros, or if you'd rather build from source.
    ```
    then set it via System Settings → Colors & Themes → Icons.
 
-The manual path builds from source and never touches your panel layout automatically.
+The source installer builds against your installed Qt and KDE libraries. It does
+not replace your panel widget, but it can repair the known invalid
+`plugin=metadata` entry if that corruption is present.
 
 <br>
 
+## 🔒 Security notes
+
+The one-command installer downloads a **prebuilt binary** and installs it as root (via `pkexec`) into the system Qt plugin directory, where it loads into `plasmashell`. Know what you're trusting:
+
+- It downloads from **this repository's releases** only (HTTPS only). Releases are built by GitHub Actions from the tagged source (`.github/workflows/release.yml`) and come with a build attestation. You can check a downloaded file was built by this repository's workflow:
+  ```
+  gh attestation verify <downloaded file> --repo Stark-0505/Kde-windows-system-tray
+  ```
+- The `SHA256SUMS` file is served from the same release as the binary, so on its own it catches corruption, **not** a malicious publisher. The attestation above is what ties a binary to the source it was built from.
+- Pin repo and version for repeatable installs:
+  ```
+  curl -fsSL <install.sh URL> | WM_REPO=owner/repo WM_VERSION=v1.0.0 bash
+  ```
+- The safest option is to skip prebuilt binaries: use [manual installation](#️-manual-installation), which builds from source on your machine so you can read what you run.
+- The root step re-verifies the binary's hash from a root-owned copy, so a local process can't swap the file between the check and the install.
+- If there is no release yet, the one-liner stops with an error. Build from source in that case.
+
 ## ✅ Requirements
 
-- KDE Plasma 6
-- **Fedora KDE Plasma 6, x86_64** — the only environment the prebuilt release is currently built and tested for. Other distributions should use [manual installation](#-manual-installation).
+- **Runtime:** KDE Plasma 6.8.2 or newer.
+- **Source build:** Qt 6.11 or newer, plus KDE Frameworks and ECM 6.30 or newer.
+- **Prebuilt release:** Fedora 45, x86_64. Other distributions should use [manual installation](#-manual-installation).
 
 ## 🗑️ Uninstall
 
 ```bash
-curl -fsSL https://github.com/RaceConditionWinner/Kde-windows-system-tray/releases/latest/download/uninstall.sh | bash
+curl -fsSL https://github.com/Stark-0505/Kde-windows-system-tray/releases/latest/download/uninstall.sh | bash
 ```
 
 Restores the stock System Tray in its original position, restores your

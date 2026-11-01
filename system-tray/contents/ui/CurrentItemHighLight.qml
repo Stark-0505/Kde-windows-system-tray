@@ -7,50 +7,36 @@
 import QtQuick
 
 import org.kde.kirigami as Kirigami
-import org.kde.ksvg as KSvg
-import org.kde.plasma.core as PlasmaCore
 
-KSvg.FrameSvgItem {
+// A single flat, rounded selection box (same look as the system cluster's
+// highlight) that sits behind whatever the open popup belongs to.
+//
+// Unlike the stock Plasma "active tab" indicator this replaces, it does NOT
+// slide between items and it never stretches across the whole tray: it just
+// fades in on the item that opened the popup and fades out when it closes.
+Rectangle {
     id: currentItemHighLight
 
+    // Still passed by main.qml; unused by this flat style.
     property int location
 
-    property bool animationEnabled: true
+    // What to highlight while the hidden-items popup is open (the arrow).
+    property Item hiddenPopupAnchor: null
+
     property var highlightedItem: null
 
-    property var containerMargins: {
-        let item = currentItemHighLight;
-        while (item.parent) {
-            item = item.parent;
-            if (item.isAppletContainer) {
-                return item.getMargins;
-            }
-        }
-        return undefined;
-    }
+    readonly property real inset: Math.round(Kirigami.Units.smallSpacing / 2)
 
     z: -1 // always draw behind icons
 
-    imagePath: "widgets/tabbar"
-    prefix: {
-        let prefix;
-        switch (location) {
-        case PlasmaCore.Types.LeftEdge:
-            prefix = "west-active-tab";
-            break;
-        case PlasmaCore.Types.TopEdge:
-            prefix = "north-active-tab";
-            break;
-        case PlasmaCore.Types.RightEdge:
-            prefix = "east-active-tab";
-            break;
-        default:
-            prefix = "south-active-tab";
+    radius: 5
+    color: Kirigami.Theme.textColor
+    opacity: (highlightedItem && systemTrayState.expanded) ? 0.12 : 0
+    Behavior on opacity {
+        NumberAnimation {
+            duration: Kirigami.Units.shortDuration
+            easing.type: systemTrayState.expanded ? Easing.OutCubic : Easing.InCubic
         }
-        if (!hasElementPrefix(prefix)) {
-            prefix = "active-tab";
-        }
-        return prefix;
     }
 
     // update when System Tray is expanded - applet activated or hidden icons shown
@@ -62,6 +48,12 @@ KSvg.FrameSvgItem {
         }
 
         function onExpandedChanged() {
+            Qt.callLater(currentItemHighLight.updateHighlightedItem);
+        }
+
+        // Switching between the Action Panel and the hidden-icons popup
+        // keeps the tray expanded, so watch this one too.
+        function onHiddenItemsRequestedChanged() {
             Qt.callLater(currentItemHighLight.updateHighlightedItem);
         }
     }
@@ -98,78 +90,32 @@ KSvg.FrameSvgItem {
     }
 
     function updateHighlightedItem() {
-        if (systemTrayState.expanded) {
-            if (systemTrayState.activeApplet && systemTrayState.activeApplet.parent && systemTrayState.activeApplet.parent.inVisibleLayout) {
-                changeHighlightedItem(systemTrayState.activeApplet.parent.container, /*forceEdgeHighlight*/false);
-            } else { // 'Show hidden items' popup
-                changeHighlightedItem(parent, /*forceEdgeHighlight*/true);
-            }
+        if (!systemTrayState.expanded) {
+            highlightedItem = null;
+            return;
+        }
+
+        const applet = systemTrayState.activeApplet;
+        if (applet && applet.parent && applet.parent.inVisibleLayout) {
+            // A tray icon's own popup: highlight just that icon.
+            changeHighlightedItem(applet.parent.container);
+        } else if (systemTrayState.actionPanelShowing) {
+            // The system cluster draws its own highlight for the Action Panel.
+            highlightedItem = null;
+        } else if (hiddenPopupAnchor) {
+            // Hidden-icons popup (or a hidden icon's popup): highlight the arrow.
+            changeHighlightedItem(hiddenPopupAnchor);
         } else {
             highlightedItem = null;
         }
-        currentItemHighLight.opacity = systemTrayState.expanded ? 1 : 0
     }
 
-    function changeHighlightedItem(nextItem, forceEdgeHighlight) {
-        // do not animate the first appearance
-        // or when the property value of a highlighted item changes
-        if (!highlightedItem || (highlightedItem === nextItem)) {
-            animationEnabled = false;
-        }
-
+    function changeHighlightedItem(nextItem) {
         const p = parent.mapFromItem(nextItem, 0, 0);
-        if (containerMargins && (parent.oneRowOrColumn || forceEdgeHighlight)) {
-            x = p.x - containerMargins('left', /*returnAllMargins*/true);
-            y = p.y - containerMargins('top', /*returnAllMargins*/true);
-            width = nextItem.width + containerMargins('left', /*returnAllMargins*/true) + containerMargins('right', /*returnAllMargins*/true);
-            height = nextItem.height + containerMargins('bottom', /*returnAllMargins*/true) + containerMargins('top', /*returnAllMargins*/true);
-        } else {
-            x = p.x;
-            y = p.y;
-            width = nextItem.width;
-            height = nextItem.height;
-        }
-
+        x = p.x + inset;
+        y = p.y + inset;
+        width = Math.max(0, nextItem.width - inset * 2);
+        height = Math.max(0, nextItem.height - inset * 2);
         highlightedItem = nextItem;
-        animationEnabled = true;
-    }
-
-    Behavior on opacity {
-        NumberAnimation {
-            duration: Kirigami.Units.shortDuration
-            easing.type: systemTrayState.expanded ? Easing.OutCubic : Easing.InCubic
-        }
-    }
-    Behavior on x {
-        id: xAnim
-        enabled: currentItemHighLight.animationEnabled
-        NumberAnimation {
-            duration: Kirigami.Units.longDuration
-            easing.type: Easing.InOutCubic
-        }
-    }
-    Behavior on y {
-        id: yAnim
-        enabled: currentItemHighLight.animationEnabled
-        NumberAnimation {
-            duration: Kirigami.Units.longDuration
-            easing.type: Easing.InOutCubic
-        }
-    }
-    Behavior on width {
-        id: widthAnim
-        enabled: currentItemHighLight.animationEnabled
-        NumberAnimation {
-            duration: Kirigami.Units.longDuration
-            easing.type: Easing.InOutCubic
-        }
-    }
-    Behavior on height {
-        id: heightAnim
-        enabled: currentItemHighLight.animationEnabled
-        NumberAnimation {
-            duration: Kirigami.Units.longDuration
-            easing.type: Easing.InOutCubic
-        }
     }
 }

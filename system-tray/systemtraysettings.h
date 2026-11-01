@@ -8,6 +8,7 @@
 
 #include <QObject>
 #include <QPointer>
+#include <QTimer>
 #include <QStringList>
 
 class KConfigLoader;
@@ -34,6 +35,17 @@ public:
     const QStringList shownItems() const;
     const QStringList hiddenItems() const;
 
+    // User-defined icon order. When isAutoSort() is false the tray follows
+    // itemOrder() (ids not listed go after the listed ones, in automatic order).
+    bool isAutoSort() const;
+    const QStringList itemOrder() const;
+
+    // Items the user moved to the popup while they were active ("dynamic"
+    // items that should come back the next time they have something to show).
+    // Cleared automatically when the item's own status changes.
+    const QStringList dismissedItems() const;
+    void setItemDismissed(const QString &itemId, bool dismissed);
+
     void cleanupPlugin(const QString &pluginId);
 
 Q_SIGNALS:
@@ -44,6 +56,11 @@ private:
     void loadConfig();
     void writeConfigValue(const QString &key, const QVariant &value);
     void notifyAboutChangedEnabledPlugins(const QStringList &enabledPluginsOld, const QStringList &enabledPluginsNew);
+
+    // Several config writes in a row (pinning edits three lists) must cost one
+    // model refresh, not one each: emit configurationChanged() once per burst.
+    void scheduleConfigurationChanged();
+    QTimer m_changeTimer;
 
     QPointer<KConfigLoader> config;
 

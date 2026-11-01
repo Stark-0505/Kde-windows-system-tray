@@ -5,6 +5,7 @@
 */
 
 #include <optional>
+#include <utility>
 
 #include "debug.h"
 #include "systemtray.h"
@@ -124,7 +125,7 @@ void SystemTray::migrateFromSystrayContainer()
 
     for (Plasma::Containment *cont : corona()->containments()) {
         if (cont->id() == oldSystrayId) {
-            delete cont;
+            cont->destroy();
             break;
         }
     }
@@ -293,6 +294,7 @@ QAbstractItemModel *SystemTray::sortedSystemTrayModel()
     if (!m_sortedSystemTrayModel) {
         m_sortedSystemTrayModel = new SortedSystemTrayModel(SortedSystemTrayModel::SortingType::SystemTray, this);
         m_sortedSystemTrayModel->setSourceModel(systemTrayModel());
+        m_sortedSystemTrayModel->setSettings(m_settings);
     }
     return m_sortedSystemTrayModel;
 }
@@ -311,13 +313,11 @@ void SystemTray::onEnabledAppletsChanged()
     const auto appletsList = applets();
     for (Plasma::Applet *applet : appletsList) {
         if (!applet->pluginMetaData().isValid()) {
-            applet->config().parent().deleteGroup();
-            delete applet;
+            applet->destroy();
         } else {
             const QString task = applet->pluginMetaData().pluginId();
             if (!m_settings->isEnabledPlugin(task)) {
-                applet->config().parent().deleteGroup();
-                delete applet;
+                applet->destroy();
                 m_configGroupIds.remove(task);
             }
         }
@@ -342,13 +342,13 @@ void SystemTray::startApplet(const QString &pluginId)
     qCDebug(SYSTEM_TRAY) << "Adding applet:" << pluginId;
 
     if (m_configGroupIds.contains(pluginId)) {
-        Applet *applet = Plasma::PluginLoader::self()->loadApplet(pluginId, m_configGroupIds.value(pluginId), QVariantList());
+        auto applet = Plasma::PluginLoader::self()->loadApplet(pluginId, m_configGroupIds.value(pluginId), QVariantList());
         if (!applet) {
             qCWarning(SYSTEM_TRAY) << "Unable to find applet" << pluginId;
             return;
         }
         applet->setProperty("org.kde.plasma:force-create", true);
-        addApplet(applet);
+        addApplet(std::move(applet));
     } else {
         Applet *applet = createApplet(pluginId, QVariantList() << u"org.kde.plasma:force-create"_s);
         if (applet) {
@@ -362,6 +362,7 @@ void SystemTray::stopApplet(const QString &pluginId)
     const auto appletsList = applets();
     for (Plasma::Applet *applet : appletsList) {
         if (applet->pluginMetaData().isValid() && pluginId == applet->pluginMetaData().pluginId()) {
+            // Preserve its configuration so a restarted D-Bus service can reload it.
             delete applet;
         }
     }

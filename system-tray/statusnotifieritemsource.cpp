@@ -30,6 +30,7 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QSysInfo>
+#include <QtEndian>
 #include <QVariantMap>
 
 #include <netinet/in.h>
@@ -308,21 +309,35 @@ void StatusNotifierItemSource::refreshCallback(QDBusPendingCallWatcher *call)
         QString path = properties[QStringLiteral("IconThemePath")].toString();
 
         if (!path.isEmpty() && path != m_iconThemePath) {
-            if (!m_customIconLoader) {
+            const bool createIconLoader = !m_customIconLoader;
+            if (createIconLoader) {
                 m_customIconLoader = new KIconLoader(QString(), QStringList(), this);
             }
             QString appName;
             auto tokens = QStringView(path).split(u'/', Qt::SkipEmptyParts);
-            if (tokens.length() >= 3 && tokens.takeLast() == QLatin1String("icons"))
+            if (tokens.length() >= 3 && tokens.takeLast() == QLatin1String("icons")) {
                 appName = tokens.takeLast().toString();
+            }
 
             m_customIconLoader->reconfigure(appName, QStringList(path));
-            m_customIconLoader->addAppDir(appName.size() ? appName : QStringLiteral("unused"), path);
+            m_customIconLoader->addAppDir(appName.isEmpty() ? QStringLiteral("unused") : appName, path);
 
-            connect(m_customIconLoader, &KIconLoader::iconChanged, this, [=, this] {
-                m_customIconLoader->reconfigure(appName, QStringList(path));
-                m_customIconLoader->addAppDir(appName.size() ? appName : QStringLiteral("unused"), path);
-            });
+            if (createIconLoader) {
+                // One connection per loader avoids retaining every historical
+                // icon path after an item's IconThemePath changes.
+                connect(m_customIconLoader, &KIconLoader::iconChanged, this, [this] {
+                    if (m_iconThemePath.isEmpty()) {
+                        return;
+                    }
+                    QString currentAppName;
+                    auto currentTokens = QStringView(m_iconThemePath).split(u'/', Qt::SkipEmptyParts);
+                    if (currentTokens.length() >= 3 && currentTokens.takeLast() == QLatin1String("icons")) {
+                        currentAppName = currentTokens.takeLast().toString();
+                    }
+                    m_customIconLoader->reconfigure(currentAppName, QStringList(m_iconThemePath));
+                    m_customIconLoader->addAppDir(currentAppName.isEmpty() ? QStringLiteral("unused") : currentAppName, m_iconThemePath);
+                });
+            }
         }
         m_iconThemePath = path;
 
@@ -433,18 +448,29 @@ void StatusNotifierItemSource::reloadIcon()
 
 QPixmap StatusNotifierItemSource::KDbusImageStructToPixmap(const KDbusImageStruct &image) const
 {
-    if (QSysInfo::ByteOrder == QSysInfo::LittleEndian) {
-        uint *uintBuf = (uint *)image.data.data();
-        for (uint i = 0; i < image.data.size() / sizeof(uint); ++i) {
-            *uintBuf = ntohl(*uintBuf);
-            ++uintBuf;
-        }
+    // Both the dimensions and the pixel data come straight from the application
+    // over D-Bus, so neither can be trusted. QImage's raw-buffer constructor
+    // does NOT check that the buffer is large enough, so a mismatch would make
+    // us read past the end of it (a crash, or memory contents drawn as an icon).
+    constexpr int MaxIconDimension = 1024; // far more than any tray icon needs
+    if (image.width <= 0 || image.height <= 0 || image.width > MaxIconDimension || image.height > MaxIconDimension) {
+        return {};
     }
-    if (image.width == 0 || image.height == 0) {
+    const qsizetype pixelBytes = qsizetype(image.width) * image.height * 4;
+    if (image.data.size() < pixelBytes) {
         return {};
     }
 
-    auto dataRef = new QByteArray(image.data);
+    // Work on a private copy: the pixels are byte-swapped below, and `image` is
+    // const (and its data may be shared), so it must not be modified in place
+    // (doing so used to corrupt the icon whenever it was converted twice).
+    auto dataRef = new QByteArray(image.data.constData(), pixelBytes);
+    if (QSysInfo::ByteOrder == QSysInfo::LittleEndian) {
+        auto *pixels = reinterpret_cast<quint32 *>(dataRef->data());
+        for (qsizetype i = 0; i < pixelBytes / 4; ++i) {
+            pixels[i] = qFromBigEndian<quint32>(pixels[i]);
+        }
+    }
 
     QImage iconImage(
         reinterpret_cast<const uchar *>(dataRef->data()),
@@ -462,7 +488,10 @@ QIcon StatusNotifierItemSource::imageVectorToPixmap(const KDbusImageVector &vect
 {
     QIcon icon;
 
-    for (int i = 0; i < vector.size(); ++i) {
+    // An app has no reason to send more than a handful of sizes; don't let a
+    // misbehaving one make us decode thousands.
+    constexpr int MaxIconVariants = 32;
+    for (int i = 0; i < vector.size() && i < MaxIconVariants; ++i) {
         icon.addPixmap(KDbusImageStructToPixmap(vector[i]));
     }
 

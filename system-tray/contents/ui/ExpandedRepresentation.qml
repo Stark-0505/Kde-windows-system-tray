@@ -21,9 +21,20 @@ import "components" as Components
 Item {
     id: popup
 
-    // Width: pinned to 360px
-    Layout.minimumWidth: 360
-    Layout.maximumWidth: 360
+    // When only the hidden-icons grid is showing, the popup hugs the grid
+    // (so it scales with the number of icons). Every other mode keeps the
+    // original fixed 360px width.
+    readonly property bool hiddenGridOnly: systemTrayState.hiddenItemsRequested
+        && !systemTrayState.activeApplet
+        && hiddenItemsView.layout.itemCount > 0
+    readonly property int hiddenGridWidth: hiddenItemsView.fitWidth
+    // + top and bottom margin around the grid (see hiddenItemsView below)
+    readonly property int hiddenGridHeight: hiddenItemsView.fitHeight + Kirigami.Units.smallSpacing * 2
+
+    // Width: pinned to 360px (or the grid's width in hidden-icons mode)
+    Layout.minimumWidth: hiddenGridOnly ? hiddenGridWidth : 360
+    Layout.maximumWidth: hiddenGridOnly ? hiddenGridWidth : 360
+    Layout.preferredWidth: hiddenGridOnly ? hiddenGridWidth : -1
 
     // Height: flyouts and the hidden-items-only popup are fixed at
     // gridUnit*24. The Action Panel case is content-driven instead of a
@@ -41,14 +52,39 @@ Item {
     // reactively regardless of declaration order (container.themedActive
     // above already relies on the same pattern).
     readonly property bool compactPopup: systemTrayState.activeApplet || systemTrayState.hiddenItemsRequested
-    Layout.minimumHeight: compactPopup
-        ? Kirigami.Units.gridUnit * 24
-        : actionPanel.implicitHeight
-    Layout.maximumHeight: compactPopup
-        ? Kirigami.Units.gridUnit * 24
-        : -1 // no cap for action panel
+    Layout.minimumHeight: hiddenGridOnly
+        ? hiddenGridHeight
+        : compactPopup
+            ? Kirigami.Units.gridUnit * 24
+            : actionPanel.implicitHeight
+    Layout.maximumHeight: hiddenGridOnly
+        ? hiddenGridHeight
+        : compactPopup
+            ? Kirigami.Units.gridUnit * 24
+            : -1 // no cap for action panel
+    Layout.preferredHeight: hiddenGridOnly ? hiddenGridHeight : -1
 
     property alias hiddenLayout: hiddenItemsView.layout
+    // The grid itself, for drag & drop hit-testing (see main.qml).
+    readonly property alias hiddenGrid: hiddenItemsView
+
+    // What the popup is showing; a change while it stays open hands over to
+    // the ghost of the old popup (see PopupGhost.qml and main.qml).
+    readonly property string modeKey: systemTrayState.activeApplet ? "applet"
+        : systemTrayState.hiddenItemsRequested ? "hidden" : "actions"
+
+    // The dragged icon, following the pointer while it is over this popup.
+    Image {
+        z: 1000
+        enabled: false
+        visible: root.dragActive && source != ""
+        source: root.dragGhostUrl
+        width: root.dragGhostSize.width
+        height: root.dragGhostSize.height
+        opacity: 0.85
+        x: visible ? parent.mapFromGlobal(root.dragGlobalX, root.dragGlobalY).x - width / 2 : 0
+        y: visible ? parent.mapFromGlobal(root.dragGlobalX, root.dragGlobalY).y - height / 2 : 0
+    }
     property alias plasmoidContainer: container
 
     readonly property bool themedActive: container.themedActive
@@ -243,6 +279,7 @@ Item {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.topMargin: Kirigami.Units.smallSpacing
+                Layout.bottomMargin: Kirigami.Units.smallSpacing
                 // ExpanderArrow's one job: this is the only content it
                 // opens, never alongside the Action Panel below.
                 visible: systemTrayState.hiddenItemsRequested && root.hiddenLayout.itemCount > 0

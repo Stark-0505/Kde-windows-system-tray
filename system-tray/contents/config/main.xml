@@ -26,6 +26,22 @@
         <label>If true, all systray entries will be always in the main area, outside the popup.</label>
         <default>false</default>
     </entry>
+    <entry name="popupAnimation" type="bool">
+      <label>Whether the old popup stays on screen, sliding down and fading, when one popup is replaced by another.</label>
+      <default>true</default>
+    </entry>
+    <entry name="autoSort" type="bool">
+      <label>If true, tray icons are ordered automatically (by category, then name). If false (default), they follow itemOrder, which the user sets by dragging icons.</label>
+      <default>false</default>
+    </entry>
+    <entry name="itemOrder" type="StringList">
+      <label>User-defined order of tray icons (item ids), used when autoSort is false. Icons not listed come last.</label>
+      <default></default>
+    </entry>
+    <entry name="dismissedItems" type="StringList" hidden="true">
+      <label>Dynamic tray items the user moved to the popup while they were active. They return to the panel the next time their own status changes.</label>
+      <default></default>
+    </entry>
     <entry name="knownItems" type="StringList" hidden="true">
       <default></default>
     </entry>
@@ -34,8 +50,24 @@
       <default>false</default>
     </entry>
     <entry name="scaleIconsToFit" type="bool">
-      <label>Whether to automatically scale System Tray icons to fix the available thickness of the panel. If false, tray icons will be capped at the smallMedium size (22px) and become a two-row/column layout when the panel is thick.</label>
+      <label>Whether to automatically scale System Tray icons to fit the available thickness of the panel. If false, tray icons use the size set by iconSize.</label>
       <default>false</default>
+    </entry>
+    <entry name="iconSize" type="int">
+      <label>Size in pixels of System Tray icons in the panel (when not scaling to fit) and in the hidden-items popup</label>
+      <default>22</default>
+      <min>12</min>
+      <max>48</max>
+    </entry>
+    <entry name="expanderOnLeft" type="bool">
+      <label>Whether the hidden-items expander arrow sits at the leading end of the tray, before the icons (Windows style). If false, it sits between the icons and the system cluster.</label>
+      <default>true</default>
+    </entry>
+    <entry name="popupColumns" type="int">
+      <label>Maximum number of icons per row in the hidden-items popup</label>
+      <default>5</default>
+      <min>3</min>
+      <max>10</max>
     </entry>
     <entry name="iconSpacing" type="int">
       <label>spacing between icons, determined by this number multiplied by Kirigami.Units.smallSpacing</label>

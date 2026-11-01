@@ -1,0 +1,95 @@
+# Builds the plugin from source when a version tag is pushed and publishes it
+# as a GitHub release, with checksums and a build attestation, so the
+# one-command installer downloads something that can be traced back to this
+# repository's source rather than to a file somebody uploaded by hand.
+#
+# To publish:  git tag v1.0.0 && git push origin v1.0.0
+#
+# NOTE: written without being able to run GitHub Actions. Check the first run
+# (Actions tab) and expect to adjust package names if Fedora's change.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write      # create the release
+  id-token: write      # sign the attestation
+  attestations: write  # store the attestation
+
+jobs:
+  static-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check shell syntax
+        run: bash -n scripts/install.sh scripts/uninstall.sh system-tray/dev.sh system-tray/verify.sh
+      - name: Check metadata
+        run: python3 -c 'import json; json.load(open("system-tray/metadata.json"))'
+      - name: Check XML files
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          for path in Path("system-tray").rglob("*.xml"):
+              ET.parse(path)
+          print("XML files are valid.")
+          PY
+      - name: Test QML helper logic
+        run: node tests/qml_helpers.test.cjs
+
+  build:
+    needs: static-checks
+    runs-on: ubuntu-latest
+    container: fedora:45   # Build against the Plasma 6.8 generation, not a moving latest image.
+    steps:
+      - name: Install build dependencies
+        run: |
+          dnf install -y git tar gcc-c++ cmake extra-cmake-modules \
+            qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtquickcontrols2-devel \
+            kf6-kpackage-devel kf6-kconfig-devel kf6-ki18n-devel kf6-kcoreaddons-devel \
+            kf6-kwindowsystem-devel kf6-kio-devel kf6-kiconthemes-devel \
+            kf6-kitemmodels-devel kf6-kservice-devel kf6-kxmlgui-devel \
+            kf6-kjobwidgets-devel kf6-kcmutils-devel \
+            libplasma-devel plasma-workspace-devel plasma-workspace-libs
+
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          cmake -S system-tray -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr
+          cmake --build build --parallel "$(nproc)"
+          plugin=build/lib/plasma/applets/org.kde.windowsmodern.systemtray.so
+          test -f "$plugin"
+          dependencies="$(ldd "$plugin" 2>&1 || true)"
+          if grep -q "not found" <<<"$dependencies"; then
+            printf '%s\n' "$dependencies" >&2
+            exit 1
+          fi
+
+      - name: Collect release assets
+        run: |
+          mkdir dist
+          cp build/lib/plasma/applets/org.kde.windowsmodern.systemtray.so \
+             dist/org.kde.windowsmodern.systemtray-fedora-x86_64.so
+          tar -czf dist/WindowsModern-WhiteSurApps.tar.gz -C windows-icon WindowsModern-WhiteSurApps
+          cp scripts/install.sh scripts/uninstall.sh dist/
+          (cd dist && sha256sum org.kde.windowsmodern.systemtray-fedora-x86_64.so WindowsModern-WhiteSurApps.tar.gz > SHA256SUMS)
+          cat dist/SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*

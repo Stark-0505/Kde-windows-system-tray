@@ -33,6 +33,12 @@ PlasmaCore.ToolTipArea {
     required textFormat
 
     readonly property alias iconContainer: iconContainer
+
+    // Icons can be dragged to reorder them and to pin/unpin them (the drag
+    // controller lives in main.qml). The system cluster is fixed in place.
+    readonly property bool draggable: !exclusivePrimaryInput && (inVisibleLayout || inHiddenLayout)
+    // Dim the icon that is being dragged; a snapshot follows the pointer.
+    opacity: dragHandler.active ? 0.4 : 1
     readonly property bool inHiddenLayout: effectiveStatus === PlasmaCore.Types.PassiveStatus
     readonly property bool inVisibleLayout: effectiveStatus === PlasmaCore.Types.ActiveStatus
 
@@ -122,19 +128,63 @@ PlasmaCore.ToolTipArea {
         }
     }
 
-    // Win11-styled card background for hidden layout
+    // Plasmoid icons (including the system group) manage the shared popup:
+    // while the pointer is over one, losing focus must not close the popup, so
+    // clicking it can switch the popup to this icon instead of closing it.
+    HoverHandler {
+        id: popupControlHover
+        enabled: abstractItem.model.itemType === "Plasmoid"
+        onHoveredChanged: root.popupControlHoverChanged(hovered)
+    }
+    Component.onDestruction: {
+        if (popupControlHover.hovered) {
+            root.popupControlHoverChanged(false);
+        }
+    }
+
+    // A plain click still works as before: this only activates once the
+    // pointer has moved past the drag threshold, and then takes the gesture
+    // over from the MouseArea above (and from any applet content below it).
+    DragHandler {
+        id: dragHandler
+        enabled: abstractItem.draggable
+        target: null // nothing moves: the controller shows a drop line instead
+        acceptedButtons: Qt.LeftButton
+        // Start dragging after a few pixels (Windows uses about 4) instead of
+        // Qt's default 10, which made picking an icon up feel sluggish. Hand
+        // jitter during an ordinary click is still well below this.
+        dragThreshold: 5
+
+        function report() {
+            const sp = centroid.scenePosition;
+            const local = abstractItem.mapFromItem(null, sp.x, sp.y);
+            const g = abstractItem.mapToGlobal(local.x, local.y);
+            root.updateDrag(g.x, g.y);
+        }
+
+        onActiveChanged: {
+            if (active) {
+                root.beginDrag(abstractItem, abstractItem.inHiddenLayout);
+                report();
+            } else {
+                root.endDrag();
+            }
+        }
+        onCentroidChanged: if (active) report()
+    }
+
+    // Win11-styled hover background for hidden layout: invisible until the
+    // pointer is over the icon, so the popup is just a tidy grid of icons.
     Rectangle {
         visible: abstractItem.inHiddenLayout
         anchors.fill: parent
-        radius: 4
-        border.width: 1
-        border.color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.08)
+        radius: 5
         color: {
             if (mouseArea.containsPress)
-                return Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.10);
+                return Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.14);
             if (mouseArea.containsMouse)
-                return Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.06);
-            return Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.04);
+                return Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.08);
+            return Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0);
         }
         Behavior on color { ColorAnimation { duration: Kirigami.Units.shortDuration } }
         z: -1
@@ -142,7 +192,7 @@ PlasmaCore.ToolTipArea {
 
     ColumnLayout {
         anchors.fill: abstractItem
-        anchors.margins: abstractItem.inHiddenLayout ? 10 : 0
+        anchors.margins: 0
         spacing: 0
 
         FocusScope {
@@ -181,18 +231,16 @@ PlasmaCore.ToolTipArea {
 
             property alias container: abstractItem
             property alias inVisibleLayout: abstractItem.inVisibleLayout
-            readonly property int size: abstractItem.inVisibleLayout ? root.itemSize : Kirigami.Units.iconSizes.smallMedium
+            readonly property int size: abstractItem.inVisibleLayout ? root.itemSize : Plasmoid.configuration.iconSize
 
-            Layout.alignment: abstractItem.inHiddenLayout
-                ? Qt.AlignLeft | Qt.AlignTop
-                : Qt.AlignHCenter | Qt.AlignVCenter
+            Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
             implicitWidth: root.vertical && abstractItem.inVisibleLayout ? abstractItem.width : size
             implicitHeight: !root.vertical && abstractItem.inVisibleLayout ? abstractItem.height : size
         }
 
         Item {
             Layout.fillHeight: true
-            visible: abstractItem.inHiddenLayout
+            visible: false
         }
 
         PlasmaComponents3.Label {
@@ -201,7 +249,9 @@ PlasmaCore.ToolTipArea {
             Layout.fillWidth: true
             maximumLineCount: abstractItem.maxTextLines
 
-            visible: abstractItem.inHiddenLayout
+            // Icon-only popup: the name is still read by screen readers
+            // (Accessible.name) and shown as a tooltip on hover.
+            visible: false
 
             horizontalAlignment: Text.AlignLeft
             verticalAlignment: Text.AlignBottom

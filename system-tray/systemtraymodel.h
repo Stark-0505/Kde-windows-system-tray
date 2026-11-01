@@ -4,6 +4,7 @@
 */
 #pragma once
 #include <QAbstractListModel>
+#include "itemstatustracker.h"
 #include <QConcatenateTablesProxyModel>
 #include <QList>
 #include <QPointer>
@@ -26,7 +27,9 @@ public:
     QHash<int, QByteArray> roleNames() const override;
 private Q_SLOTS: void onConfigurationChanged();
 protected: Plasma::Types::ItemStatus calculateEffectiveStatus(bool canRender, Plasma::Types::ItemStatus status, QString itemId) const;
-private: QPointer<SystemTraySettings> m_settings; bool m_showAllItems; QStringList m_shownItems; QStringList m_hiddenItems;
+    // Subclasses report an item's own (native) status here whenever it may have changed.
+    void nativeStatusChanged(const QString &itemId, Plasma::Types::ItemStatus status);
+private: QPointer<SystemTraySettings> m_settings; bool m_showAllItems; QStringList m_shownItems; QStringList m_hiddenItems; QStringList m_dismissedItems; ItemStatusTracker m_statusTracker;
 };
 
 class PlasmoidModel : public BaseModel {

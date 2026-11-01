@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(windowsmodern-systemtray LANGUAGES CXX)
+project(windowsmodern-systemtray VERSION 1.0.0 LANGUAGES CXX)
 
 # ------------------------------------------------------------------------------
 # C++ / Qt build configuration
@@ -21,7 +21,14 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
 # Extra CMake Modules
 # ------------------------------------------------------------------------------
 
-find_package(ECM REQUIRED 5.240.0 NO_MODULE)
+# Plasma 6.8 uses Qt 6.11 and KDE Frameworks 6.30.
+# Enforce the build baseline so an older SDK cannot produce a plugin that
+# requests a PlasmaQuick SONAME unavailable on the target system.
+set(QT_MIN_VERSION "6.11.0")
+set(KF_MIN_VERSION "6.30.0")
+set(PLASMA_MIN_VERSION "6.8.2")
+
+find_package(ECM ${KF_MIN_VERSION} REQUIRED NO_MODULE)
 
 set(CMAKE_MODULE_PATH
     "${ECM_MODULE_PATH}"
@@ -34,7 +41,7 @@ include(ECMQtDeclareLoggingCategory)
 # Qt
 # ------------------------------------------------------------------------------
 
-find_package(Qt6 REQUIRED COMPONENTS
+find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS
     DBus
     Gui
     Qml
@@ -75,12 +82,14 @@ set(KDE_INSTALL_SYSCONFDIR     "${CMAKE_INSTALL_SYSCONFDIR}")
 # KDE Frameworks / Plasma
 # ------------------------------------------------------------------------------
 
-find_package(KF6 REQUIRED COMPONENTS
+find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS
     Config
+    CoreAddons
     IconThemes
     I18n
     ItemModels
     JobWidgets
+    KCMUtils # Required by the embedded org.kde.kcmutils QML imports.
     KIO
     Package
     Service
@@ -88,8 +97,8 @@ find_package(KF6 REQUIRED COMPONENTS
     XmlGui
 )
 
-find_package(Plasma REQUIRED)
-find_package(PlasmaQuick REQUIRED)
+find_package(Plasma ${PLASMA_MIN_VERSION} REQUIRED)
+find_package(PlasmaQuick ${PLASMA_MIN_VERSION} REQUIRED)
 
 # ------------------------------------------------------------------------------
 # Project configuration
@@ -174,9 +183,6 @@ set(SRCS
     ${DBUS_SRCS}
     ${SRC_LOGGING}
 
-    systemtray.cpp
-    systemtray.h
-
     systemtraymodel.cpp
     systemtraymodel.h
 
@@ -232,10 +238,12 @@ target_link_libraries(systemtray_static
     PUBLIC
         Qt6::DBus
         Qt6::Gui
+        Qt6::Qml
         Qt6::Quick
         Qt6::Widgets
 
         KF6::ConfigCore
+        KF6::CoreAddons
         KF6::IconThemes
         KF6::I18n
         KF6::ItemModels
@@ -290,6 +298,7 @@ ecm_target_qml_sources(org.kde.windowsmodern.systemtray
         "${CMAKE_CURRENT_SOURCE_DIR}/contents/ui/config.qml"
         "${CMAKE_CURRENT_SOURCE_DIR}/contents/ui/CurrentItemHighLight.qml"
         "${CMAKE_CURRENT_SOURCE_DIR}/contents/ui/ExpanderArrow.qml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/contents/ui/PopupGhost.qml"
         "${CMAKE_CURRENT_SOURCE_DIR}/contents/ui/ExpandedRepresentation.qml"
         "${CMAKE_CURRENT_SOURCE_DIR}/contents/ui/HiddenItemsView.qml"
         "${CMAKE_CURRENT_SOURCE_DIR}/contents/ui/ItemLoader.qml"
@@ -322,6 +331,8 @@ ecm_target_qml_sources(org.kde.windowsmodern.systemtray
     SOURCES
         "${CMAKE_CURRENT_SOURCE_DIR}/contents/ui/js/funcs.js"
         "${CMAKE_CURRENT_SOURCE_DIR}/contents/ui/js/colorType.js"
+        "${CMAKE_CURRENT_SOURCE_DIR}/contents/ui/js/trayorder.js"
+        "${CMAKE_CURRENT_SOURCE_DIR}/contents/ui/js/safetext.js"
 )
 
 ecm_target_qml_sources(org.kde.windowsmodern.systemtray
