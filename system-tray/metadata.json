@@ -7,7 +7,7 @@
                 "Name": "Jeysef"
             }
         ],
-        "BugReportUrl": "https://github.com/KaizennGIT/Kde-windows-system-tray/issues",
+        "BugReportUrl": "https://github.com/Stark-0505/Kde-windows-system-tray/issues",
         "Category": "Windows and Tasks",
         "Description": "Quickly access system features and application status icons",
         "EnabledByDefault": true,
@@ -18,8 +18,8 @@
         "License": "GPL-2.0-or-later",
         "Name": "System Tray (Windows Modern)",
         "Version": "1.0.0",
-        "Website": "https://github.com/KaizennGIT/Kde-windows-system-tray"
+        "Website": "https://github.com/Stark-0505/Kde-windows-system-tray"
     },
-    "X-Plasma-API-Minimum-Version": "6.0",
+    "X-Plasma-API-Minimum-Version": "6.8.2",
     "X-Plasma-ContainmentType": "CustomEmbedded"
 }

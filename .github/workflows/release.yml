@@ -19,14 +19,39 @@ permissions:
   attestations: write  # store the attestation
 
 jobs:
-  build:
+  static-checks:
     runs-on: ubuntu-latest
-    container: fedora:latest   # the installer targets Fedora, so build on Fedora
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check shell syntax
+        run: bash -n scripts/install.sh scripts/uninstall.sh system-tray/dev.sh system-tray/verify.sh
+      - name: Check metadata
+        run: python3 -c 'import json; json.load(open("system-tray/metadata.json"))'
+      - name: Check XML files
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          for path in Path("system-tray").rglob("*.xml"):
+              ET.parse(path)
+          print("XML files are valid.")
+          PY
+      - name: Test QML helper logic
+        run: node tests/qml_helpers.test.cjs
+
+  build:
+    needs: static-checks
+    runs-on: ubuntu-latest
+    container: fedora:45   # Build against the Plasma 6.8 generation, not a moving latest image.
     steps:
       - name: Install build dependencies
         run: |
           dnf install -y git tar gcc-c++ cmake extra-cmake-modules \
-            qt6-qtbase-devel qt6-qtdeclarative-devel \
+            qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtquickcontrols2-devel \
             kf6-kpackage-devel kf6-kconfig-devel kf6-ki18n-devel kf6-kcoreaddons-devel \
             kf6-kwindowsystem-devel kf6-kio-devel kf6-kiconthemes-devel \
             kf6-kitemmodels-devel kf6-kservice-devel kf6-kxmlgui-devel \
@@ -39,6 +64,13 @@ jobs:
         run: |
           cmake -S system-tray -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --parallel "$(nproc)"
+          plugin=build/lib/plasma/applets/org.kde.windowsmodern.systemtray.so
+          test -f "$plugin"
+          dependencies="$(ldd "$plugin" 2>&1 || true)"
+          if grep -q "not found" <<<"$dependencies"; then
+            printf '%s\n' "$dependencies" >&2
+            exit 1
+          fi
 
       - name: Collect release assets
         run: |

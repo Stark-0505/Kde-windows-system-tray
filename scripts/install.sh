@@ -8,7 +8,7 @@
 #  Modern one on your panel — in place, no manual panel editing.
 #
 #  Usage:
-#      curl -fsSL https://github.com/KaizennGIT/Kde-windows-system-tray/releases/latest/download/install.sh | bash
+#      curl -fsSL https://github.com/Stark-0505/Kde-windows-system-tray/releases/latest/download/install.sh | bash
 #
 #  Optional environment variables:
 #      WM_REPO=owner/repo   GitHub repo to download release assets from
@@ -19,12 +19,12 @@
 # ──────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-REPO="${WM_REPO:-KaizennGIT/Kde-windows-system-tray}"
+REPO="${WM_REPO:-Stark-0505/Kde-windows-system-tray}"
 WM_VERSION="${WM_VERSION:-latest}"
 [[ "$REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || { echo "Invalid WM_REPO: $REPO" >&2; exit 1; }
 [[ "$WM_VERSION" =~ ^[A-Za-z0-9._-]+$ ]]            || { echo "Invalid WM_VERSION: $WM_VERSION" >&2; exit 1; }
 # HTTPS only (also for redirects), modern TLS, and fail on HTTP errors.
-CURL_OPTS=(--proto '=https' --tlsv1.2 -fsSL)
+CURL_OPTS=(--proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL)
 NO_RELEASE_HINT="Does https://github.com/${REPO}/releases have a release? To build from source instead: git clone https://github.com/${REPO}.git && cd Kde-windows-system-tray/system-tray && ./dev.sh"
 if [ "$WM_VERSION" = "latest" ]; then
     RELEASE_BASE="https://github.com/${REPO}/releases/latest/download"
@@ -79,12 +79,24 @@ plasma_eval() {
 }
 
 if ! command -v plasmashell &>/dev/null; then
-    die "plasmashell not found. This installer requires KDE Plasma 6."
+    die "plasmashell not found. This installer requires KDE Plasma 6.8.2 or newer."
 fi
-PLASMA_VERSION="$(plasmashell --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-PLASMA_MAJOR="${PLASMA_VERSION%%.*}"
-if [ "${PLASMA_MAJOR:-0}" -ne 6 ]; then
-    die "KDE Plasma 6 is required (detected: ${PLASMA_VERSION:-unknown}). See README.md for other versions."
+PLASMA_VERSION="$(plasmashell --version 2>/dev/null | sed -nE 's/.* ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' | sed -n '1p')"
+if [[ ! "$PLASMA_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    die "Could not detect the KDE Plasma version."
+fi
+
+version_at_least() {
+    local current_major current_minor current_patch required_major required_minor required_patch
+    IFS=. read -r current_major current_minor current_patch <<< "$1"
+    IFS=. read -r required_major required_minor required_patch <<< "$2"
+    (( current_major > required_major ||
+       (current_major == required_major && current_minor > required_minor) ||
+       (current_major == required_major && current_minor == required_minor && current_patch >= required_patch) ))
+}
+
+if ! version_at_least "$PLASMA_VERSION" "6.8.2"; then
+    die "KDE Plasma 6.8.2 or newer is required (detected: $PLASMA_VERSION). Build from source against your installed Plasma version."
 fi
 
 ARCH="$(uname -m)"
@@ -137,6 +149,14 @@ info "Verifying checksums..."
     sha256sum -c subset.sums || die "Checksum verification FAILED. Aborting — nothing was installed or changed."
 )
 info "Checksums verified."
+
+if command -v ldd &>/dev/null; then
+    DEPENDENCIES="$(ldd "$TMP_DIR/$SO_ASSET" 2>&1 || true)"
+    if grep -q "not found" <<<"$DEPENDENCIES"; then
+        err "$DEPENDENCIES"
+        die "The release plugin has unresolved runtime dependencies. Build from source on this system."
+    fi
+fi
 
 # ── Icon theme: install + remember previous theme ─────────────────────
 CURRENT_THEME="$(kreadconfig6 --file kdeglobals --group Icons --key Theme 2>/dev/null || true)"

@@ -179,7 +179,9 @@ void PlasmoidModel::addApplet(Plasma::Applet *applet) {
     connect(applet, &Plasma::Applet::statusChanged, this, [this, applet](Plasma::Types::ItemStatus status) {
         int idx = indexOfPluginId(applet->pluginMetaData().pluginId());
         nativeStatusChanged(applet->pluginMetaData().pluginId(), status);
-        Q_EMIT dataChanged(index(idx, 0), index(idx, 0), {static_cast<int>(BaseRole::Status)});
+        if (idx >= 0) {
+            Q_EMIT dataChanged(index(idx, 0), index(idx, 0), {static_cast<int>(BaseRole::Status)});
+        }
     });
     Q_EMIT dataChanged(index(idx, 0), index(idx, 0));
 }
@@ -190,6 +192,9 @@ void PlasmoidModel::removeApplet(Plasma::Applet *applet) {
 }
 
 void PlasmoidModel::appendRow(const KPluginMetaData &pluginMetaData) {
+    if (indexOfPluginId(pluginMetaData.pluginId()) >= 0) {
+        return;
+    }
     int idx = rowCount();
     beginInsertRows(QModelIndex(), idx, idx);
     m_items.append({pluginMetaData, nullptr});
@@ -198,6 +203,9 @@ void PlasmoidModel::appendRow(const KPluginMetaData &pluginMetaData) {
 
 void PlasmoidModel::removeRow(const QString &pluginId) {
     int idx = indexOfPluginId(pluginId);
+    if (idx < 0) {
+        return;
+    }
     beginRemoveRows(QModelIndex(), idx, idx);
     m_items.removeAt(idx);
     endRemoveRows();
@@ -303,9 +311,15 @@ QHash<int, QByteArray> StatusNotifierModel::roleNames() const {
 }
 
 void StatusNotifierModel::addSource(const QString &source) {
+    if (indexOfSource(source) >= 0 || !m_sniHost) {
+        return;
+    }
+    StatusNotifierItemSource *sni = m_sniHost->itemForService(source);
+    if (!sni) {
+        return;
+    }
     int count = rowCount();
     beginInsertRows(QModelIndex(), count, count);
-    StatusNotifierItemSource *sni = m_sniHost->itemForService(source);
     connect(sni, &StatusNotifierItemSource::dataUpdated, this, [=, this]() { dataUpdated(source); });
     m_items.append(source);
     endInsertRows();

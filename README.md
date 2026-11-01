@@ -74,7 +74,7 @@ Right-click the tray → **Configure System Tray…** → General:
 ### ⭐ Recommended — one-command install
 
 ```bash
-curl -fsSL https://github.com/KaizennGIT/Kde-windows-system-tray/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/Stark-0505/Kde-windows-system-tray/releases/latest/download/install.sh | bash
 ```
 
 This automatically:
@@ -94,7 +94,7 @@ For other distros, or if you'd rather build from source.
 1. Install build dependencies (Fedora shown; see [system-tray/BUILD.md](system-tray/BUILD.md) for Arch/Debian/Ubuntu):
    ```bash
    sudo dnf install gcc-c++ cmake extra-cmake-modules \
-     qt6-qtbase-devel qt6-qtdeclarative-devel \
+     qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtquickcontrols2-devel \
      kf6-kpackage-devel kf6-kconfig-devel kf6-ki18n-devel kf6-kcoreaddons-devel \
      kf6-kwindowsystem-devel kf6-kio-devel kf6-kiconthemes-devel \
      kf6-kitemmodels-devel kf6-kservice-devel kf6-kxmlgui-devel \
@@ -103,7 +103,7 @@ For other distros, or if you'd rather build from source.
    ```
 2. Clone this repository:
    ```bash
-   git clone https://github.com/KaizennGIT/Kde-windows-system-tray.git
+   git clone https://github.com/Stark-0505/Kde-windows-system-tray.git
    cd Kde-windows-system-tray
    ```
 3. Build and install:
@@ -118,7 +118,9 @@ For other distros, or if you'd rather build from source.
    ```
    then set it via System Settings → Colors & Themes → Icons.
 
-The manual path builds from source and never touches your panel layout automatically.
+The source installer builds against your installed Qt and KDE libraries. It does
+not replace your panel widget, but it can repair the known invalid
+`plugin=metadata` entry if that corruption is present.
 
 <br>
 
@@ -128,7 +130,7 @@ The one-command installer downloads a **prebuilt binary** and installs it as roo
 
 - It downloads from **this repository's releases** only (HTTPS only). Releases are built by GitHub Actions from the tagged source (`.github/workflows/release.yml`) and come with a build attestation. You can check a downloaded file was built by this repository's workflow:
   ```
-  gh attestation verify <downloaded file> --repo KaizennGIT/Kde-windows-system-tray
+  gh attestation verify <downloaded file> --repo Stark-0505/Kde-windows-system-tray
   ```
 - The `SHA256SUMS` file is served from the same release as the binary, so on its own it catches corruption, **not** a malicious publisher. The attestation above is what ties a binary to the source it was built from.
 - Pin repo and version for repeatable installs:
@@ -141,13 +143,14 @@ The one-command installer downloads a **prebuilt binary** and installs it as roo
 
 ## ✅ Requirements
 
-- KDE Plasma 6
-- **Fedora KDE Plasma 6, x86_64** — the only environment the prebuilt release is currently built and tested for. Other distributions should use [manual installation](#-manual-installation).
+- **Runtime:** KDE Plasma 6.8.2 or newer.
+- **Source build:** Qt 6.11 or newer, plus KDE Frameworks and ECM 6.30 or newer.
+- **Prebuilt release:** Fedora 45, x86_64. Other distributions should use [manual installation](#-manual-installation).
 
 ## 🗑️ Uninstall
 
 ```bash
-curl -fsSL https://github.com/KaizennGIT/Kde-windows-system-tray/releases/latest/download/uninstall.sh | bash
+curl -fsSL https://github.com/Stark-0505/Kde-windows-system-tray/releases/latest/download/uninstall.sh | bash
 ```
 
 Restores the stock System Tray in its original position, restores your

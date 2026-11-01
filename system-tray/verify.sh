@@ -37,7 +37,18 @@ else
     fail ".so NOT FOUND at $SO_PATH — run ./dev.sh"
 fi
 
-# 2. No KPackage (critical: prevents dark rectangle)
+# 2. No stale user-local plugin (it can shadow the system build).
+for local_plugin in \
+    "$HOME/.local/lib64/qt6/plugins/plasma/applets/${APP_ID}.so" \
+    "$HOME/.local/lib/qt6/plugins/plasma/applets/${APP_ID}.so"; do
+    if [ -f "$local_plugin" ]; then
+        fail "Stale user-local plugin found at $local_plugin"
+    else
+        pass "No stale plugin at $local_plugin"
+    fi
+done
+
+# 3. No KPackage (critical: prevents dark rectangle)
 if [ -d "$KPACKAGE_PATH" ] || [ -d "$LOCAL_KPACKAGE" ]; then
     fail "KPackage EXISTS — will cause dark rectangle popup"
     echo "       Remove: sudo rm -rf $KPACKAGE_PATH $LOCAL_KPACKAGE"
@@ -45,7 +56,7 @@ else
     pass "No KPackage (dark rectangle prevented)"
 fi
 
-# 3. Layout config
+# 4. Layout config
 if grep -q "plugin=${APP_ID}" "$LAYOUT_FILE" 2>/dev/null; then
     pass "Panel layout includes ${APP_ID}"
 else
@@ -58,7 +69,7 @@ else
     pass "No corrupted plugin=metadata"
 fi
 
-# 4. Symbols
+# 5. Symbols
 if [ -f "$SO_PATH" ]; then
     # Capture first, then grep: `nm | grep -q` under pipefail gives false
     # negatives (grep exits early, nm gets SIGPIPE, pipeline reports failure).
@@ -72,7 +83,7 @@ if [ -f "$SO_PATH" ]; then
     done
 fi
 
-# 5. Recent errors
+# 6. Recent errors
 errors=$(journalctl --user -u plasma-plasmashell.service --since "1 minute ago" --no-pager 2>&1 | grep -c "error.*${APP_ID}\|Cannot load.*${APP_ID}\|undefined symbol.*${APP_ID}" || true)
 if [ "$errors" -eq 0 ]; then
     pass "No recent loading errors in plasmashell"

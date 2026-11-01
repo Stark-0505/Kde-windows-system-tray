@@ -2,14 +2,19 @@
 
 ## Prerequisites
 
-This applet requires C++ compilation (it's a Plasma Containment, not a pure QML plasmoid).
+This applet requires C++ compilation (it is a Plasma Containment, not a pure QML plasmoid).
+
+The supported build baseline is KDE Plasma 6.8.2 or newer, Qt 6.11 or newer,
+and KDE Frameworks / ECM 6.30 or newer. CMake checks these versions before
+building. Build against the libraries installed on the target system to avoid
+linking the plugin to an unavailable `libPlasmaQuick` SONAME.
 
 ### Install Build Dependencies
 
-**Fedora:**
+**Fedora 45 or newer:**
 ```bash
 sudo dnf install gcc-c++ cmake extra-cmake-modules \
-  qt6-qtbase-devel qt6-qtdeclarative-devel \
+  qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtquickcontrols2-devel \
   kf6-kpackage-devel kf6-kconfig-devel kf6-ki18n-devel kf6-kcoreaddons-devel \
   kf6-kwindowsystem-devel kf6-kio-devel kf6-kiconthemes-devel \
   kf6-kitemmodels-devel kf6-kservice-devel kf6-kxmlgui-devel \
@@ -87,11 +92,11 @@ The QML and config files are compiled into the `.so` via
 
 For distribution, bundle the `.so` with an install script that copies it to
 the distro-specific Qt plugin directory. Users do not need a C++ compiler —
-they just need the runtime libs which come with any Plasma installation.
+they need the runtime libraries from a supported Plasma 6.8.2 or newer installation.
 
 ## File Summary
 
-### C++ Source (38 files)
+### C++ Source
 ```
 systemtray.h/.cpp              - Main Plasma::Containment class
 systemtraymodel.h/.cpp         - Data models (PlasmoidModel, StatusNotifierModel, SystemTrayModel)
@@ -103,6 +108,7 @@ statusnotifieritemsource.h/.cpp- Per-SNI data source (~700 lines)
 sortedsystemtraymodel.h/.cpp   - Sorting proxy model
 systemtraytypes.h/.cpp         - DBus type marshalling
 systemtraytypedefs.h           - KDbusImageStruct, KDbusToolTipStruct
+itemstatustracker.h             - Tracks tray-item status changes
 debug.h                        - Logging category
 metadata.json                  - Plugin metadata (org.kde.windowsmodern.systemtray)
 kf6_org.kde.StatusNotifierItem.xml        - DBus interface XML
@@ -124,6 +130,7 @@ contents/ui/ExpanderArrow.qml           - Chevron toggle button
 contents/ui/ExpandedRepresentation.qml  - Popup content
 contents/ui/HiddenItemsView.qml         - Hidden items grid
 contents/ui/PlasmoidPopupsContainer.qml - Active applet popup container
+contents/ui/PopupGhost.qml                - Snapshot transition between popup modes
 contents/ui/ConfigGeneral.qml           - Settings page
 contents/ui/SystemTrayState.qml         - State management
 contents/ui/CurrentItemHighLight.qml    - Active item highlight
@@ -131,6 +138,8 @@ contents/ui/PulseAnimation.qml          - Attention pulse animation
 contents/ui/config.qml                  - Config category
 contents/ui/lib/                        - Reusable tiles / sliders / page chrome
 contents/ui/components/                 - Quick-settings tiles and detail pages
-contents/ui/js/                         - Shared JS helpers
+contents/ui/js/trayorder.js              - Tray ordering and pinning logic
+contents/ui/js/safetext.js                - Tooltip markup sanitization
+contents/ui/js/                         - Other shared JS helpers
 contents/config/main.xml                - KConfig schema
 ```

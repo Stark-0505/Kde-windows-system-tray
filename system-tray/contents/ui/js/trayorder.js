@@ -143,6 +143,9 @@ function newOrder(panelIds, popupIds, id, fromZone, toZone, slot, oldOrder) {
 
 // Pin: always show in the panel.
 function pin(shown, hidden, dismissed, id) {
+    if (!usable(id)) {
+        return { shown: shown.slice(), hidden: hidden.slice(), dismissed: dismissed.slice() };
+    }
     return {
         shown: withId(shown, id),
         hidden: without(hidden, id),
@@ -154,6 +157,9 @@ function pin(shown, hidden, dismissed, id) {
 // they come back by themselves the next time they have something to show.
 // Icons whose dynamic behaviour is switched off ("popup only") stay put.
 function unpin(shown, hidden, dismissed, id) {
+    if (!usable(id)) {
+        return { shown: shown.slice(), hidden: hidden.slice(), dismissed: dismissed.slice() };
+    }
     return {
         shown: without(shown, id),
         hidden: hidden.slice(),

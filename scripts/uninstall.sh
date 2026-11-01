@@ -6,7 +6,7 @@
 #  removes the Windows Modern plugin and icon theme files.
 #
 #  Usage:
-#      curl -fsSL https://github.com/KaizennGIT/Kde-windows-system-tray/releases/latest/download/uninstall.sh | bash
+#      curl -fsSL https://github.com/Stark-0505/Kde-windows-system-tray/releases/latest/download/uninstall.sh | bash
 #
 #  Safe to run more than once.
 # ──────────────────────────────────────────────────────────────────────────
