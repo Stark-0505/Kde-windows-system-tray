@@ -68,6 +68,9 @@ QHash<int, QByteArray> BaseModel::roleNames() const {
 }
 
 void BaseModel::onConfigurationChanged() {
+    if (!m_settings) {
+        return;
+    }
     m_showAllItems = m_settings->isShowAllItems();
     m_shownItems = m_settings->shownItems();
     m_hiddenItems = m_settings->hiddenItems();
@@ -393,8 +396,13 @@ void BackgroundAppsModel::backgroundAppsChanged(const QList<QVariantMap> &backgr
         const QString instance = entry.value("instance"_L1).toString();
         // Some apps are reported as two different background instances, merge them, apps that rely on
         // background monitoring are single instance anyway otherwise there is no way to bring them back
+        if (appId.isEmpty()) {
+            continue;
+        }
         if (auto it = std::ranges::find(m_backgroundApps, appId, &BackgroundApp::appId); it != m_backgroundApps.end()) {
-            it->flatpakInstances.append(instance);
+            if (!instance.isEmpty() && !it->flatpakInstances.contains(instance)) {
+                it->flatpakInstances.append(instance);
+            }
             continue;
         }
         auto service = KService::serviceByDesktopName(appId);
@@ -541,11 +549,17 @@ BackgroundAppsFilteredModel::BackgroundAppsFilteredModel(BackgroundAppsModel *so
     : QSortFilterProxyModel(parent)
 {
     connect(StatusNotifierItemHost::self(), &StatusNotifierItemHost::itemAdded, this, [this](const QString &item) {
-        if (auto instance = StatusNotifierItemHost::self()->itemForService(item)->flatpakInstance(); !instance.isEmpty()) {
-            beginFilterChange();
-            m_flatpaksWithSni.push_back({.flatpakInstance = instance, .sniId = item});
-            endFilterChange();
+        auto *source = StatusNotifierItemHost::self()->itemForService(item);
+        if (!source) {
+            return;
         }
+        const QString instance = source->flatpakInstance();
+        if (instance.isEmpty() || std::ranges::any_of(m_flatpaksWithSni, [&item](const Info &info) { return info.sniId == item; })) {
+            return;
+        }
+        beginFilterChange();
+        m_flatpaksWithSni.push_back({.flatpakInstance = instance, .sniId = item});
+        endFilterChange();
     });
     connect(StatusNotifierItemHost::self(), &StatusNotifierItemHost::itemRemoved, this, [this](const QString &item) {
         if (auto it = std::ranges::find(m_flatpaksWithSni, item, &Info::sniId); it != m_flatpaksWithSni.end()) {
@@ -556,7 +570,12 @@ BackgroundAppsFilteredModel::BackgroundAppsFilteredModel(BackgroundAppsModel *so
     });
     const auto registeredSnis = StatusNotifierItemHost::self()->services();
     for (const auto &service : registeredSnis) {
-        if (auto instance = StatusNotifierItemHost::self()->itemForService(service)->flatpakInstance(); !instance.isEmpty()) {
+        auto *source = StatusNotifierItemHost::self()->itemForService(service);
+        if (!source) {
+            continue;
+        }
+        const QString instance = source->flatpakInstance();
+        if (!instance.isEmpty()) {
             m_flatpaksWithSni.push_back({.flatpakInstance = instance, .sniId = service});
         }
     }

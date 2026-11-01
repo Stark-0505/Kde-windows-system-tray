@@ -99,9 +99,19 @@ void StatusNotifierItemHost::registerWatcher(const QString &service)
             QDBusPendingReply<QDBusVariant> pendingItems = propetriesIface.Get(m_statusNotifierWatcher->interface(), u"RegisteredStatusNotifierItems"_s);
 
             auto *watcher = new QDBusPendingCallWatcher(pendingItems, this);
+            auto *registeredWatcher = m_statusNotifierWatcher;
             connect(watcher, &QDBusPendingCallWatcher::finished, this, [=, this]() {
                 watcher->deleteLater();
+                // Ignore a snapshot from a watcher that disappeared and was
+                // replaced while the asynchronous D-Bus call was in flight.
+                if (m_statusNotifierWatcher != registeredWatcher) {
+                    return;
+                }
                 QDBusReply<QDBusVariant> reply = *watcher;
+                if (!reply.isValid()) {
+                    qCDebug(SYSTEM_TRAY) << "Could not read registered StatusNotifierItems:" << reply.error().message();
+                    return;
+                }
                 const QStringList registeredItems = reply.value().variant().toStringList();
                 for (const QString &service : registeredItems) {
                     if (!m_sniServices.contains(service)) {
@@ -163,6 +173,19 @@ void StatusNotifierItemHost::removeAllSNIServices()
 
 void StatusNotifierItemHost::addSNIService(const QString &service)
 {
+    // A StatusNotifierItem identifier contains a service and object path.
+    const qsizetype slash = service.indexOf(u'/');
+    if (slash <= 0) {
+        qCWarning(SYSTEM_TRAY) << "Ignoring invalid StatusNotifierItem identifier:" << service;
+        return;
+    }
+
+    // Registration signals and the initial RegisteredStatusNotifierItems
+    // snapshot can report the same service. Keep one source per service.
+    if (m_sniServices.contains(service)) {
+        return;
+    }
+
     auto *item = new StatusNotifierItemSource(service, this);
     m_sniServices.insert(service, item);
     Q_EMIT itemAdded(service);

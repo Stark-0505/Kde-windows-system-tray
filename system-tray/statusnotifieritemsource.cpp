@@ -309,21 +309,35 @@ void StatusNotifierItemSource::refreshCallback(QDBusPendingCallWatcher *call)
         QString path = properties[QStringLiteral("IconThemePath")].toString();
 
         if (!path.isEmpty() && path != m_iconThemePath) {
-            if (!m_customIconLoader) {
+            const bool createIconLoader = !m_customIconLoader;
+            if (createIconLoader) {
                 m_customIconLoader = new KIconLoader(QString(), QStringList(), this);
             }
             QString appName;
             auto tokens = QStringView(path).split(u'/', Qt::SkipEmptyParts);
-            if (tokens.length() >= 3 && tokens.takeLast() == QLatin1String("icons"))
+            if (tokens.length() >= 3 && tokens.takeLast() == QLatin1String("icons")) {
                 appName = tokens.takeLast().toString();
+            }
 
             m_customIconLoader->reconfigure(appName, QStringList(path));
-            m_customIconLoader->addAppDir(appName.size() ? appName : QStringLiteral("unused"), path);
+            m_customIconLoader->addAppDir(appName.isEmpty() ? QStringLiteral("unused") : appName, path);
 
-            connect(m_customIconLoader, &KIconLoader::iconChanged, this, [=, this] {
-                m_customIconLoader->reconfigure(appName, QStringList(path));
-                m_customIconLoader->addAppDir(appName.size() ? appName : QStringLiteral("unused"), path);
-            });
+            if (createIconLoader) {
+                // One connection per loader avoids retaining every historical
+                // icon path after an item's IconThemePath changes.
+                connect(m_customIconLoader, &KIconLoader::iconChanged, this, [this] {
+                    if (m_iconThemePath.isEmpty()) {
+                        return;
+                    }
+                    QString currentAppName;
+                    auto currentTokens = QStringView(m_iconThemePath).split(u'/', Qt::SkipEmptyParts);
+                    if (currentTokens.length() >= 3 && currentTokens.takeLast() == QLatin1String("icons")) {
+                        currentAppName = currentTokens.takeLast().toString();
+                    }
+                    m_customIconLoader->reconfigure(currentAppName, QStringList(m_iconThemePath));
+                    m_customIconLoader->addAppDir(currentAppName.isEmpty() ? QStringLiteral("unused") : currentAppName, m_iconThemePath);
+                });
+            }
         }
         m_iconThemePath = path;
 

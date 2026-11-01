@@ -47,13 +47,18 @@ const QStringList SystemTraySettings::knownPlugins() const
 
 void SystemTraySettings::addKnownPlugin(const QString &pluginId)
 {
+    if (pluginId.isEmpty() || m_knownItems.contains(pluginId)) {
+        return;
+    }
     m_knownItems << pluginId;
     writeConfigValue(KNOWN_ITEMS_KEY, m_knownItems);
 }
 
 void SystemTraySettings::removeKnownPlugin(const QString &pluginId)
 {
-    m_knownItems.removeAll(pluginId);
+    if (!m_knownItems.removeAll(pluginId)) {
+        return;
+    }
     writeConfigValue(KNOWN_ITEMS_KEY, m_knownItems);
 }
 
@@ -69,6 +74,9 @@ const QStringList SystemTraySettings::enabledPlugins() const
 
 void SystemTraySettings::addEnabledPlugin(const QString &pluginId)
 {
+    if (pluginId.isEmpty() || m_extraItems.contains(pluginId)) {
+        return;
+    }
     m_extraItems << pluginId;
     writeConfigValue(EXTRA_ITEMS_KEY, m_extraItems);
     Q_EMIT enabledPluginsChanged({pluginId}, {});
@@ -76,7 +84,9 @@ void SystemTraySettings::addEnabledPlugin(const QString &pluginId)
 
 void SystemTraySettings::removeEnabledPlugin(const QString &pluginId)
 {
-    m_extraItems.removeAll(pluginId);
+    if (!m_extraItems.removeAll(pluginId)) {
+        return;
+    }
     writeConfigValue(EXTRA_ITEMS_KEY, m_extraItems);
     Q_EMIT enabledPluginsChanged({}, {pluginId});
 }
