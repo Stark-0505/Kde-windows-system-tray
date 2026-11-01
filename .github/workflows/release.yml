@@ -62,7 +62,9 @@ jobs:
 
       - name: Build
         run: |
-          cmake -S system-tray -B build -DCMAKE_BUILD_TYPE=Release
+          cmake -S system-tray -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr
           cmake --build build --parallel "$(nproc)"
           plugin=build/lib/plasma/applets/org.kde.windowsmodern.systemtray.so
           test -f "$plugin"

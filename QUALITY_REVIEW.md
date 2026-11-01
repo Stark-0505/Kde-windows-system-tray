@@ -162,3 +162,15 @@ Every non-binary project file listed below was inventoried and checked for relev
 - `qmllint`, `clang-tidy`, `cppcheck`, and `shellcheck` are not installed in this environment.
 - No native Plasma 6.8.2 runtime is available here, so this pass does not claim the plugin ABI or runtime behavior is fully verified.
 - No source changes were made to the icon artwork. The SVG parser pass found no malformed SVG documents.
+
+## Plasma 6.8.2 API and build follow-up
+
+The next user-reported build exposed a source/API mismatch that was not caught by the prior static-only pass. This follow-up makes these targeted changes:
+
+- Use the `std::unique_ptr<Plasma::Applet>` returned by `PluginLoader::loadApplet()` and transfer ownership to `Containment::addApplet()` with `std::move()`.
+- Use Plasma's `Applet::destroy()` when disabling/removing configured applets and when removing the migrated legacy containment. Keep direct deletion in `stopApplet()` because that path unloads a temporarily unavailable D-Bus-backed applet while retaining its configuration for restart.
+- Declare the direct `KF6::CoreAddons` link and require the `KCMUtils` CMake component used by embedded QML imports.
+- Make `dev.sh` show the actual configure and compiler diagnostics rather than truncating build output to the final three lines. Set the install prefix consistently to `/usr` and allow `BUILD_JOBS` to override the default parallelism.
+- Align the documented Debian/Ubuntu and Arch dependency lists with the direct CoreAddons and Qt Quick Controls 2 requirements.
+
+The follow-up is statically checked, but it is not build-verified here: this environment has no Qt 6 / KDE Frameworks / Plasma development packages, and CMake configuration cannot find ECM. Run the documented build on the target Plasma 6.8.2 or newer SDK to validate compilation, linking, and runtime loading.

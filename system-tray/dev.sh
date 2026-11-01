@@ -50,8 +50,10 @@ detect_paths() {
 
 # ── Build ─────────────────────────────────────────────────────────
 info "Building..."
-cmake -S "$SRC_DIR" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release > /dev/null
-cmake --build "$BUILD_DIR" --parallel "$(nproc)" 2>&1 | tail -3
+cmake -S "$SRC_DIR" -B "$BUILD_DIR" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr
+cmake --build "$BUILD_DIR" --parallel "${BUILD_JOBS:-$(nproc)}"
 
 if [ ! -f "$PLUGIN_SRC" ]; then
     err "Build did not produce $PLUGIN_SRC"

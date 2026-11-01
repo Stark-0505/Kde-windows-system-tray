@@ -25,21 +25,20 @@ sudo dnf install gcc-c++ cmake extra-cmake-modules \
 **Arch Linux:**
 ```bash
 sudo pacman -S cmake extra-cmake-modules qt6-base qt6-declarative \
-  kpackage kconfig ki18n kwindowsystem kio kiconthemes \
+  kpackage kconfig kcoreaddons ki18n kwindowsystem kio kiconthemes \
   kitemmodels kservice kxmlgui kjobwidgets kcmutils \
-  plasma-framework plasma-workspace dbusmenu-qt6
+  plasma-framework plasma-workspace
 ```
 
 **Debian/Ubuntu:**
 ```bash
 sudo apt install cmake extra-cmake-modules \
-  qt6-base-dev qt6-declarative-dev \
-  libkf6package-dev libkf6config-dev libkf6i18n-dev \
+  qt6-base-dev qt6-declarative-dev qt6-quickcontrols2-dev \
+  libkf6package-dev libkf6config-dev libkf6coreaddons-dev libkf6i18n-dev \
   libkf6windowsystem-dev libkf6kio-dev libkf6iconthemes-dev \
   libkf6itemmodels-dev libkf6service-dev libkf6xmlgui-dev \
   libkf6jobwidgets-dev libkf6kcmutils-dev \
-  libplasma-dev plasma-workspace-dev \
-  libdbusmenu-qt6-dev
+  libplasma-dev plasma-workspace-dev
 ```
 
 ## Build
@@ -47,8 +46,8 @@ sudo apt install cmake extra-cmake-modules \
 ```bash
 cd system-tray
 
-cmake -B build -DCMAKE_INSTALL_PREFIX=/usr
-cmake --build build --parallel $(nproc)
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+cmake --build build --parallel "$(nproc)"
 ```
 
 ## Install

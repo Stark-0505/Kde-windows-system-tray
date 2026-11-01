@@ -84,10 +84,12 @@ set(KDE_INSTALL_SYSCONFDIR     "${CMAKE_INSTALL_SYSCONFDIR}")
 
 find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS
     Config
+    CoreAddons
     IconThemes
     I18n
     ItemModels
     JobWidgets
+    KCMUtils # Required by the embedded org.kde.kcmutils QML imports.
     KIO
     Package
     Service
@@ -241,6 +243,7 @@ target_link_libraries(systemtray_static
         Qt6::Widgets
 
         KF6::ConfigCore
+        KF6::CoreAddons
         KF6::IconThemes
         KF6::I18n
         KF6::ItemModels
