@@ -93,6 +93,45 @@ For distribution, bundle the `.so` with an install script that copies it to
 the distro-specific Qt plugin directory. Users do not need a C++ compiler —
 they need the runtime libraries from a supported Plasma 6.8.2 or newer installation.
 
+### Releases
+
+The only prebuilt binary is for **Fedora 45, x86_64**, built by the manual
+`Release` workflow (`.github/workflows/release.yml`) in a `fedora:45` container
+with the packages listed above. A plugin has to match the Plasma and Qt libraries
+it runs against, so no other target is advertised. The workflow publishes:
+
+```
+org.kde.windowsmodern.systemtray-fedora-x86_64.so   the plugin, copied from build/lib/plasma/applets/
+WindowsModern-WhiteSurApps.tar.gz                   the icon theme
+install.sh, uninstall.sh                            the scripts in scripts/
+SHA256SUMS                                          checksums of all of the above
+build-info.txt                                      version, commit, toolchain, target system
+```
+
+`scripts/install.sh` defines these names once (the block between
+`BEGIN RELEASE ASSET CONTRACT` and `END RELEASE ASSET CONTRACT`);
+`scripts/release-contract.sh` prints them. Before publishing, `scripts/package-release.sh check`
+confirms the files match that list exactly, the checksums hold, and `build-info.txt`
+describes this version and commit. `install.sh` reads the target distribution,
+version and architecture and the minimum Plasma version from `build-info.txt`
+and refuses a system that doesn't match. See the README for how to run a release.
+
+## Tests
+
+```bash
+tests/installer.test.sh        # install and uninstall against stand-ins for Plasma
+tests/release_notes.test.sh
+tests/release_assets.test.sh
+tests/release_contract.test.sh
+node tests/qml_helpers.test.cjs
+cmake -S tests/cpp -B build-tests && cmake --build build-tests && ctest --test-dir build-tests --output-on-failure
+```
+
+`tests/cpp` compiles the real `dbusserviceobserver.cpp` against small stand-ins
+for the KDE types, so it needs only Qt 6 (Core, DBus, Test). The installer tests
+use fake `curl`, `pkexec`, `qdbus6` and friends in a temporary directory and never
+touch the system they run on. They test the scripts' logic, not Plasma itself.
+
 ## File Summary
 
 ### C++ Source

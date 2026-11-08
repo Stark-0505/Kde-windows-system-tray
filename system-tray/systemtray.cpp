@@ -171,6 +171,9 @@ void SystemTray::showPlasmoidMenu(QQuickItem *appletInterface, int x, int y)
     }
 
     auto *applet = appletInterface->property("_plasma_applet").value<Plasma::Applet *>();
+    if (!applet) {
+        return;
+    }
 
     QPointF pos = appletInterface->mapToScene(QPointF(x, y));
 
@@ -393,18 +396,24 @@ void SystemTray::activate(const QString &service, QPoint pos, QQuickItem *status
         return;
     }
 
-    connect(
+    // The icon can be destroyed before the D-Bus reply arrives.
+    const QPointer<QQuickItem> icon(statusNotifierIcon);
+    const auto connection = connect(
         source,
         &StatusNotifierItemSource::activateResult,
         this,
-        [this, service, pos, statusNotifierIcon](bool res) {
-            if (!res) {
-                openContextMenu(service, pos, statusNotifierIcon);
+        [this, service, pos, icon](bool res) {
+            if (!res && icon) {
+                openContextMenu(service, pos, icon);
             }
         },
         Qt::SingleShotConnection);
 
-    source->activate(pos.x(), pos.y());
+    // No request, no result: don't leave the connection to fire on a later,
+    // unrelated activation.
+    if (!source->activate(pos.x(), pos.y())) {
+        disconnect(connection);
+    }
 }
 
 void SystemTray::secondaryActivate(const QString &service, QPoint pos)
@@ -428,26 +437,32 @@ void SystemTray::openContextMenu(const QString &service, QPoint pos, QQuickItem 
         return;
     }
 
-    connect(
+    const QPointer<QQuickItem> icon(statusNotifierIcon);
+    const auto connection = connect(
         source,
         &StatusNotifierItemSource::contextMenuReady,
         this,
-        [this, statusNotifierIcon, pos](QMenu *menu) {
-            if (menu && !menu->isEmpty()) {
+        [icon, pos](QMenu *menu) {
+            if (menu && !menu->isEmpty() && icon && icon->window()) {
                 KAcceleratorManager::manage(menu);
 
                 menu->winId();
-                menu->windowHandle()->setTransientParent(statusNotifierIcon->window());
+                menu->windowHandle()->setTransientParent(icon->window());
                 menu->popup(pos);
 
-                if (auto item = statusNotifierIcon->window()->mouseGrabberItem()) {
+                if (auto item = icon->window()->mouseGrabberItem()) {
                     item->ungrabMouse();
                 }
             }
         },
         Qt::SingleShotConnection);
 
-    source->contextMenu(pos.x(), pos.y());
+    // Without a DBusMenu the item is asked to show its own menu and no
+    // contextMenuReady will follow: drop the connection instead of letting it
+    // pop up a second menu on the next request.
+    if (!source->contextMenu(pos.x(), pos.y())) {
+        disconnect(connection);
+    }
 }
 
 void SystemTray::scroll(const QString &service, int delta, const QString &direction)

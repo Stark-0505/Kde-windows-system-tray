@@ -1,5 +1,7 @@
 # Repository Quality Pass 2
 
+> Historical record of an earlier pass, kept as it was written. The workflows it names (`release.yml` triggered by tags, `shellcheck.yml`) have since been replaced by the manual `.github/workflows/release.yml` described in the README, and `scripts/install.sh` and `scripts/uninstall.sh` have been rewritten. For how things work now, read the README and `system-tray/BUILD.md`.
+
 ## Scope and method
 
 - Reviewed the integrated Stark-0505 repository on `integration/plasma-6.8.2` without rewriting prior history.

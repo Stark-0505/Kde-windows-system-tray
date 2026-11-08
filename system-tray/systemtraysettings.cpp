@@ -150,13 +150,17 @@ void SystemTraySettings::cleanupPlugin(const QString &pluginId)
     removeKnownPlugin(pluginId);
     removeEnabledPlugin(pluginId);
 
+    // Only write what actually changes: each write saves the config and
+    // schedules a model refresh.
     QStringList shown = shownItems();
-    shown.removeAll(pluginId);
-    writeConfigValue(SHOWN_ITEMS_KEY, shown);
+    if (shown.removeAll(pluginId)) {
+        writeConfigValue(SHOWN_ITEMS_KEY, shown);
+    }
 
     QStringList hidden = hiddenItems();
-    hidden.removeAll(pluginId);
-    writeConfigValue(HIDDEN_ITEMS_KEY, hidden);
+    if (hidden.removeAll(pluginId)) {
+        writeConfigValue(HIDDEN_ITEMS_KEY, hidden);
+    }
 
     setItemDismissed(pluginId, false);
 }

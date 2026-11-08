@@ -98,7 +98,7 @@ Plasma::Types::ItemStatus BaseModel::calculateEffectiveStatus(bool canRender, Pl
     // Dynamic items the user moved to the popup while active: they stay there
     // until their own status next changes (see nativeStatusChanged).
     bool dismissed = !forcedShown && m_dismissedItems.contains(itemId);
-    bool isDisabledSni = m_settings->isDisabledStatusNotifier(itemId);
+    bool isDisabledSni = m_settings && m_settings->isDisabledStatusNotifier(itemId);
     if (!forcedShown && (status == Plasma::Types::ItemStatus::HiddenStatus || isDisabledSni))
         return Plasma::Types::ItemStatus::HiddenStatus;
     else if (forcedShown || (!forcedHidden && !dismissed && status != Plasma::Types::ItemStatus::PassiveStatus))

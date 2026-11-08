@@ -12,6 +12,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QRegularExpression>
+#include <QSet>
 
 class KPluginMetaData;
 class SystemTraySettings;
@@ -50,7 +51,10 @@ private:
     QDBusServiceWatcher *m_systemServiceWatcher;
 
     QHash<QString /*plugin id*/, QRegularExpression /*DBus Service*/> m_dbusActivatableTasks;
-    QHash<QString, int> m_dbusServiceCounts;
+    // Live service names per plugin. A set, not a counter: every ListNames snapshot
+    // reports names that were already seen, which inflated a counter until the
+    // plugin could never be stopped again.
+    QHash<QString, QSet<QString>> m_dbusServices;
     bool m_dbusSessionServiceNamesFetched = false;
     bool m_dbusSystemServiceNamesFetched = false;
 };

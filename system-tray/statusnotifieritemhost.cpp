@@ -131,14 +131,17 @@ void StatusNotifierItemHost::unregisterWatcher(const QString &service)
     if (service == s_watcherServiceName) {
         qCDebug(SYSTEM_TRAY) << s_watcherServiceName << "disappeared";
 
-        disconnect(m_statusNotifierWatcher,
-                   &OrgKdeStatusNotifierWatcherInterface::StatusNotifierItemRegistered,
-                   this,
-                   &StatusNotifierItemHost::serviceRegistered);
-        disconnect(m_statusNotifierWatcher,
-                   &OrgKdeStatusNotifierWatcherInterface::StatusNotifierItemUnregistered,
-                   this,
-                   &StatusNotifierItemHost::serviceUnregistered);
+        // Null when the watcher was never reachable in the first place.
+        if (m_statusNotifierWatcher) {
+            disconnect(m_statusNotifierWatcher,
+                       &OrgKdeStatusNotifierWatcherInterface::StatusNotifierItemRegistered,
+                       this,
+                       &StatusNotifierItemHost::serviceRegistered);
+            disconnect(m_statusNotifierWatcher,
+                       &OrgKdeStatusNotifierWatcherInterface::StatusNotifierItemUnregistered,
+                       this,
+                       &StatusNotifierItemHost::serviceUnregistered);
+        }
 
         removeAllSNIServices();
 

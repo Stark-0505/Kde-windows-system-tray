@@ -70,6 +70,7 @@ void DBusServiceObserver::registerPlugin(const KPluginMetaData &pluginMetaData)
 void DBusServiceObserver::unregisterPlugin(const QString &pluginId)
 {
     if (m_dbusActivatableTasks.contains(pluginId)) {
+        m_dbusServices.remove(pluginId);
         auto rx = m_dbusActivatableTasks.take(pluginId);
         const QString watchedService = rx.pattern().replace(QLatin1String(".*"), QLatin1String("*"));
         m_sessionServiceWatcher->removeWatchedService(watchedService);
@@ -133,15 +134,18 @@ void DBusServiceObserver::serviceRegistered(const QString &service)
 
     for (auto it = m_dbusActivatableTasks.constBegin(), end = m_dbusActivatableTasks.constEnd(); it != end; ++it) {
         const QString &plugin = it.key();
-        if (!m_settings->isEnabledPlugin(plugin)) {
+        const auto &rx = it.value();
+        if (!rx.match(service).hasMatch()) {
             continue;
         }
 
-        const auto &rx = it.value();
-        if (rx.match(service).hasMatch()) {
+        // Track the service whether or not the plugin is enabled right now, so
+        // the bookkeeping can't drift while the plugin is switched off.
+        m_dbusServices[plugin].insert(service);
+
+        if (m_settings->isEnabledPlugin(plugin)) {
             qCDebug(SYSTEM_TRAY) << "DBus service" << service << "matching" << m_dbusActivatableTasks[plugin] << "appeared. Loading" << plugin;
             Q_EMIT serviceStarted(plugin);
-            m_dbusServiceCounts[plugin]++;
         }
     }
 }
@@ -150,18 +154,19 @@ void DBusServiceObserver::serviceUnregistered(const QString &service)
 {
     for (auto it = m_dbusActivatableTasks.constBegin(), end = m_dbusActivatableTasks.constEnd(); it != end; ++it) {
         const QString &plugin = it.key();
-        if (!m_settings->isEnabledPlugin(plugin)) {
+        const auto &rx = it.value();
+        if (!rx.match(service).hasMatch()) {
             continue;
         }
 
-        const auto &rx = it.value();
-        if (rx.match(service).hasMatch()) {
-            m_dbusServiceCounts[plugin]--;
-            Q_ASSERT(m_dbusServiceCounts[plugin] >= 0);
-            if (m_dbusServiceCounts[plugin] == 0) {
-                qCDebug(SYSTEM_TRAY) << "DBus service" << service << "matching" << m_dbusActivatableTasks[plugin] << "disappeared. Unloading" << plugin;
-                Q_EMIT serviceStopped(plugin);
-            }
+        auto services = m_dbusServices.find(plugin);
+        if (services == m_dbusServices.end() || !services->remove(service)) {
+            continue;
+        }
+
+        if (services->isEmpty() && m_settings->isEnabledPlugin(plugin)) {
+            qCDebug(SYSTEM_TRAY) << "DBus service" << service << "matching" << m_dbusActivatableTasks[plugin] << "disappeared. Unloading" << plugin;
+            Q_EMIT serviceStopped(plugin);
         }
     }
 }

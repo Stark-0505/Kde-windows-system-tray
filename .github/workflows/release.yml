@@ -1,56 +1,184 @@
-# Builds the plugin from source when a version tag is pushed and publishes it
-# as a GitHub release, with checksums and a build attestation, so the
-# one-command installer downloads something that can be traced back to this
-# repository's source rather than to a file somebody uploaded by hand.
+# Manual release. Nothing else in this repository publishes anything.
 #
-# To publish:  git tag v1.0.0 && git push origin v1.0.0
+# Run it from the Actions tab (Release, Run workflow, branch main) or with
+#   gh workflow run release.yml --ref main -f version=v1.2.0
+# when main is ready to ship. It builds the commit main points at when you press
+# the button, and publishes a release only if everything checks out.
 #
-# NOTE: written without being able to run GitHub Actions. Check the first run
-# (Actions tab) and expect to adjust package names if Fedora's change.
-name: release
+#   validate  checks the request and the source, runs the tests, writes the notes
+#   build     compiles the plugin on Fedora 45 (the only supported binary target)
+#   package   assembles the assets, runs the release gate, attests them
+#   publish   the only job that can write: draft release, verify, publish
+#
+# A release is created as a draft, checked against what the installer expects,
+# and only then published, so `releases/latest` never points at a half-made
+# release. The tag is created at publish time, on the exact commit that was built.
+name: Release
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. v1.2.0 (stable vMAJOR.MINOR.PATCH, higher than the latest release)"
+        required: true
+        type: string
 
-permissions:
-  contents: write      # create the release
-  id-token: write      # sign the attestation
-  attestations: write  # store the attestation
+# No permissions unless a job asks for them.
+permissions: {}
+
+# One release at a time; never cancel one that is half-way.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  # Read by scripts as "$VERSION"; never pasted into a script body.
+  VERSION: ${{ inputs.version }}
 
 jobs:
-  static-checks:
-    runs-on: ubuntu-latest
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      previous: ${{ steps.version.outputs.previous }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Check out the exact commit this run was started on
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: 22
-      - name: Check shell syntax
-        run: bash -n scripts/install.sh scripts/uninstall.sh system-tray/dev.sh system-tray/verify.sh
-      - name: Check metadata
-        run: python3 -c 'import json; json.load(open("system-tray/metadata.json"))'
-      - name: Check XML files
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check that this is main, and which commit
+        id: source
+        env:
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
         run: |
+          set -euo pipefail
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::Releases are cut from main. This run is on $REF; pick the main branch when you run the workflow."
+            exit 1
+          fi
+          [ "$(git rev-parse HEAD)" = "$SHA" ]
+          # Belt and braces: the commit really is part of main.
+          git merge-base --is-ancestor "$SHA" origin/main
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Releasing commit $SHA"
+
+      - name: Check the version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::'$VERSION' is not a stable version. Use vMAJOR.MINOR.PATCH, for example v1.2.0 (no pre-release suffixes)."
+            exit 1
+          fi
+          if git rev-parse --quiet --verify "refs/tags/$VERSION" >/dev/null; then
+            echo "::error::The tag $VERSION already exists."
+            exit 1
+          fi
+          releases="$(gh release list --limit 1000 --json tagName,isDraft,isPrerelease)"
+          if jq -e --arg v "$VERSION" 'any(.[]; .tagName == $v)' <<<"$releases" >/dev/null; then
+            echo "::error::A release for $VERSION already exists (published, draft or pre-release). Delete it first if that is a leftover."
+            exit 1
+          fi
+          previous="$(jq -r '.[] | select((.isDraft | not) and (.isPrerelease | not)) | .tagName | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))' <<<"$releases" | sort -V | tail -n 1)"
+          if [ -n "$previous" ]; then
+            newest="$(printf '%s\n%s\n' "$previous" "$VERSION" | sort -V | tail -n 1)"
+            if [ "$newest" != "$VERSION" ]; then
+              echo "::error::$VERSION is not newer than the latest release, $previous."
+              exit 1
+            fi
+            git rev-parse --quiet --verify "refs/tags/$previous^{commit}" >/dev/null \
+              || { echo "::error::The latest release is $previous but that tag is missing from the repository. Restore it before releasing."; exit 1; }
+            echo "Previous release: $previous"
+          else
+            echo "No previous release: this is the first one."
+          fi
+          echo "previous=$previous" >> "$GITHUB_OUTPUT"
+
+      - name: Check that the installer, workflow, docs and versions agree
+        run: |
+          set -euo pipefail
+          # The release downloads must come from this repository.
+          repo="$(scripts/release-contract.sh | sed -n 's/^DEFAULT_REPO=//p')"
+          if [ "${repo,,}" != "${GITHUB_REPOSITORY,,}" ]; then
+            echo "::error::install.sh downloads from $repo but this repository is $GITHUB_REPOSITORY. Fix DEFAULT_REPO in scripts/install.sh and the README links."
+            exit 1
+          fi
+          tests/release_contract.test.sh "$VERSION"
+
+      - name: Static checks
+        run: |
+          set -euo pipefail
+          shellcheck -x scripts/*.sh system-tray/dev.sh system-tray/verify.sh tests/*.sh
           python3 - <<'PY'
+          import json
           from pathlib import Path
           import xml.etree.ElementTree as ET
 
+          json.load(open("system-tray/metadata.json"))
           for path in Path("system-tray").rglob("*.xml"):
               ET.parse(path)
-          print("XML files are valid.")
+          print("metadata.json and XML files are valid.")
           PY
-      - name: Test QML helper logic
-        run: node tests/qml_helpers.test.cjs
+
+      - name: Tests
+        run: |
+          set -euo pipefail
+          node tests/qml_helpers.test.cjs
+          tests/release_notes.test.sh
+          tests/release_assets.test.sh
+          tests/installer.test.sh
+
+      - name: Write the release notes
+        env:
+          SHA: ${{ steps.source.outputs.sha }}
+          PREVIOUS: ${{ steps.version.outputs.previous }}
+        run: |
+          set -euo pipefail
+          mkdir notes
+          scripts/release-notes.sh "$VERSION" "$SHA" "$PREVIOUS" > notes/release-notes.md
+          cat notes/release-notes.md
+          cat notes/release-notes.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the release notes for the publish job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-notes
+          path: notes/release-notes.md
+          if-no-files-found: error
+          retention-days: 7
 
   build:
-    needs: static-checks
-    runs-on: ubuntu-latest
-    container: fedora:45   # Build against the Plasma 6.8 generation, not a moving latest image.
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    # Fedora 45 is the one target the installer supports. The plugin has to be
+    # built against the Plasma libraries it will run with.
+    container:
+      image: fedora:45
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      plugin_sha256: ${{ steps.collect.outputs.plugin_sha256 }}
     steps:
       - name: Install build dependencies
+        # The list follows system-tray/BUILD.md and the find_package() calls in
+        # system-tray/CMakeLists.txt. A package that does not exist is skipped
+        # here; if something really needed is missing, CMake fails below.
         run: |
-          dnf install -y git tar gcc-c++ cmake extra-cmake-modules \
+          dnf install -y --skip-unavailable \
+            git tar gzip gcc-c++ cmake extra-cmake-modules binutils pkgconf-pkg-config \
             qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtquickcontrols2-devel \
             kf6-kpackage-devel kf6-kconfig-devel kf6-ki18n-devel kf6-kcoreaddons-devel \
             kf6-kwindowsystem-devel kf6-kio-devel kf6-kiconthemes-devel \
@@ -58,38 +186,347 @@ jobs:
             kf6-kjobwidgets-devel kf6-kcmutils-devel \
             libplasma-devel plasma-workspace-devel plasma-workspace-libs
 
-      - uses: actions/checkout@v4
+      - name: Check out the validated commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          persist-credentials: false
 
-      - name: Build
+      - name: Check that this is the commit that was validated
+        env:
+          SHA: ${{ needs.validate.outputs.sha }}
         run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          [ "$(git rev-parse HEAD)" = "$SHA" ]
+          scripts/release-contract.sh >> "$GITHUB_ENV"
+
+      - name: Unit tests
+        run: |
+          set -euo pipefail
+          cmake -S tests/cpp -B build-tests
+          cmake --build build-tests --parallel "$(nproc)"
+          QT_QPA_PLATFORM=offscreen ctest --test-dir build-tests --output-on-failure
+
+      - name: Configure
+        run: |
+          set -euo pipefail
           cmake -S system-tray -B build \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=/usr
-          cmake --build build --parallel "$(nproc)"
-          plugin=build/lib/plasma/applets/org.kde.windowsmodern.systemtray.so
-          test -f "$plugin"
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DKDE_INSTALL_USE_QT_SYS_PATHS=ON 2>&1 | tee configure.log
+
+      - name: Compile
+        run: |
+          set -euo pipefail
+          cmake --build build --parallel "$(nproc)" 2>&1 | tee build.log
+
+      - name: Check the plugin
+        run: |
+          set -euo pipefail
+          plugin="build/lib/plasma/applets/${APP_ID}.so"
+
+          test -f "$plugin" || { echo "::error::The build did not produce $plugin"; exit 1; }
+          test -s "$plugin" || { echo "::error::$plugin is empty"; exit 1; }
+
+          header="$(readelf -h "$plugin")"
+          grep -q 'Class:.*ELF64' <<<"$header"
+          grep -q 'Type:.*DYN' <<<"$header"
+          grep -q 'Machine:.*X86-64' <<<"$header"
+
+          # Every library it needs must resolve in this build environment.
           dependencies="$(ldd "$plugin" 2>&1 || true)"
-          if grep -q "not found" <<<"$dependencies"; then
-            printf '%s\n' "$dependencies" >&2
+          if grep -q 'not found' <<<"$dependencies"; then
+            echo "$dependencies"
+            echo "::error::The plugin has unresolved shared-library dependencies."
             exit 1
           fi
 
-      - name: Collect release assets
+          # Our own code and a Qt plugin entry point are really in there (the same
+          # symbols system-tray/verify.sh looks for on an installed system).
+          symbols="$(nm -D "$plugin")"
+          for symbol in SYSTEM_TRAY DBUSMENUQT; do
+            grep -q "$symbol" <<<"$symbols" || { echo "::error::Symbol $symbol is missing from the plugin."; exit 1; }
+          done
+          grep -Eq 'qt_plugin_(instance|query_metadata)' <<<"$symbols" \
+            || { echo "::error::The file has no Qt plugin entry point."; exit 1; }
+
+          # The Qt plugin directory here must be where install.sh will put the file.
+          qt_plugin_dir="$(pkg-config --variable=plugindir Qt6Core 2>/dev/null || true)"
+          if [ -z "$qt_plugin_dir" ]; then
+            if [ -d /usr/lib64/qt6/plugins ]; then qt_plugin_dir=/usr/lib64/qt6/plugins; else qt_plugin_dir=/usr/lib/qt6/plugins; fi
+          fi
+          if [ "$qt_plugin_dir" != "/usr/lib64/qt6/plugins" ]; then
+            echo "::error::Qt looks for plugins in $qt_plugin_dir, but README.md, BUILD.md and the installer assume /usr/lib64/qt6/plugins."
+            exit 1
+          fi
+          echo "qt_plugin_dir=$qt_plugin_dir" > qt-plugin-dir.txt
+
+          # What `cmake --install` would do, for the manual install in BUILD.md. The
+          # release does not depend on it, so a difference is a warning, not a failure.
+          DESTDIR="$PWD/stage" cmake --install build >/dev/null
+          installed="$(find stage -name "${APP_ID}.so" | head -n 1)"
+          if [ "${installed#stage}" != "$qt_plugin_dir/plasma/applets/${APP_ID}.so" ]; then
+            echo "::warning::cmake --install puts the plugin at '${installed#stage}', not '$qt_plugin_dir/plasma/applets/${APP_ID}.so'. The installer is unaffected, but BUILD.md's manual install may need fixing."
+          fi
+
+      - name: Collect the plugin and write the build info
+        id: collect
+        env:
+          SHA: ${{ needs.validate.outputs.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          mkdir dist
-          cp build/lib/plasma/applets/org.kde.windowsmodern.systemtray.so \
-             dist/org.kde.windowsmodern.systemtray-fedora-x86_64.so
-          tar -czf dist/WindowsModern-WhiteSurApps.tar.gz -C windows-icon WindowsModern-WhiteSurApps
-          cp scripts/install.sh scripts/uninstall.sh dist/
-          (cd dist && sha256sum org.kde.windowsmodern.systemtray-fedora-x86_64.so WindowsModern-WhiteSurApps.tar.gz > SHA256SUMS)
-          cat dist/SHA256SUMS
+          set -euo pipefail
+          # Read single fields. Sourcing /etc/os-release would overwrite $VERSION.
+          os_field() { sed -n "s/^$1=//p" /etc/os-release | tr -d '"'; }
+          distro="$(os_field ID)"; distro_version="$(os_field VERSION_ID)"; pretty_name="$(os_field PRETTY_NAME)"
+          arch="$(uname -m)"
+          [ "$distro" = "fedora" ] && [ "$distro_version" = "45" ] && [ "$arch" = "x86_64" ] \
+            || { echo "::error::Expected Fedora 45 on x86_64, got $distro $distro_version on $arch."; exit 1; }
+          [ "$SO_ASSET" = "${APP_ID}-${distro}-${arch}.so" ] \
+            || { echo "::error::SO_ASSET ($SO_ASSET) does not match the build environment (${distro}-${arch})."; exit 1; }
+
+          min_plasma="$(sed -nE 's/^set\(PLASMA_MIN_VERSION "([0-9]+\.[0-9]+\.[0-9]+)"\)/\1/p' system-tray/CMakeLists.txt)"
+          [ -n "$min_plasma" ] || { echo "::error::PLASMA_MIN_VERSION not found in system-tray/CMakeLists.txt"; exit 1; }
+          package_version() { rpm -q --qf '%{VERSION}' "$1"; }
+
+          mkdir -p plugin
+          cp "build/lib/plasma/applets/${APP_ID}.so" "plugin/$SO_ASSET"
+          cat > "plugin/$INFO_ASSET" <<INFO
+          name=windowsmodern-systemtray
+          version=${VERSION#v}
+          tag=$VERSION
+          source_repository=$GITHUB_REPOSITORY
+          source_commit=$SHA
+          source_ref=refs/heads/main
+          plugin_id=$APP_ID
+          plugin_asset=$SO_ASSET
+          target_distro=$distro
+          target_distro_version=$distro_version
+          target_arch=$arch
+          min_plasma=$min_plasma
+          qt_plugin_dir=$(sed 's/^qt_plugin_dir=//' qt-plugin-dir.txt)
+          built_on=$pretty_name
+          qt_version=$(package_version qt6-qtbase-devel)
+          kf6_version=$(package_version kf6-kconfig-devel)
+          plasma_libs_version=$(package_version libplasma-devel)
+          compiler=$(gcc --version | head -n 1)
+          cmake_version=$(cmake --version | head -n 1)
+          build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          workflow_run=$RUN_URL
+          INFO
+          cat "plugin/$INFO_ASSET"
+
+          sha="$(sha256sum "plugin/$SO_ASSET" | cut -d' ' -f1)"
+          echo "plugin_sha256=$sha" >> "$GITHUB_OUTPUT"
+          echo "$sha  $SO_ASSET"
+
+      - name: Keep the plugin for the package job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: plugin
+          path: plugin/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Keep the build logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-logs
+          path: |
+            configure.log
+            build.log
+          if-no-files-found: ignore
+          retention-days: 30
+
+  package:
+    needs: [validate, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write       # to sign the attestation
+      attestations: write   # to store it
+    steps:
+      - name: Check out the validated commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          persist-credentials: false
+
+      - name: Check that the working tree is exactly that commit
+        env:
+          SHA: ${{ needs.validate.outputs.sha }}
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$SHA" ]
+          [ -z "$(git status --porcelain)" ]
+          scripts/release-contract.sh >> "$GITHUB_ENV"
+
+      - name: Download the plugin
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: plugin
+          path: plugin
+
+      - name: Check that the plugin is the one the build job made
+        env:
+          EXPECTED: ${{ needs.build.outputs.plugin_sha256 }}
+        run: |
+          set -euo pipefail
+          [ "$(sha256sum "plugin/$SO_ASSET" | cut -d' ' -f1)" = "$EXPECTED" ]
+
+      - name: Assemble the release assets
+        run: scripts/package-release.sh assemble plugin dist
+
+      - name: Release gate
+        env:
+          SHA: ${{ needs.validate.outputs.sha }}
+        run: |
+          set -euo pipefail
+          scripts/package-release.sh check dist "$VERSION" "$SHA"
+          {
+            echo "### Release assets for $VERSION"
+            echo
+            echo '| Asset | Size (bytes) | SHA-256 |'
+            echo '| --- | ---: | --- |'
+            while read -r sha name; do
+              echo "| \`$name\` | $(stat -c %s "dist/$name") | \`$sha\` |"
+            done < dist/"$SUMS_ASSET"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/*
 
-      - name: Publish release
-        uses: softprops/action-gh-release@v2
+      - name: Keep the assets for the publish job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          files: dist/*
+          name: release-assets
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [validate, package]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write   # create the release and its tag
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SHA: ${{ needs.validate.outputs.sha }}
+    steps:
+      - name: Check out the scripts of the validated commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          sparse-checkout: scripts
+          persist-credentials: false
+
+      - name: Download the assets
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: dist
+
+      - name: Download the release notes
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-notes
+          path: notes
+
+      - name: Check everything again, right before publishing
+        run: |
+          set -euo pipefail
+          scripts/release-contract.sh >> "$GITHUB_ENV"
+          scripts/package-release.sh check dist "$VERSION" "$SHA"
+          test -s notes/release-notes.md
+          # Nobody created this tag or release while the build was running.
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$VERSION" >/dev/null 2>&1; then
+            echo "::error::The tag $VERSION appeared while this workflow was running."
+            exit 1
+          fi
+          releases="$(gh release list --limit 1000 --json tagName)"
+          if jq -e --arg v "$VERSION" 'any(.[]; .tagName == $v)' <<<"$releases" >/dev/null; then
+            echo "::error::A release for $VERSION appeared while this workflow was running."
+            exit 1
+          fi
+
+      - name: Create the draft release
+        id: draft
+        run: |
+          set -euo pipefail
+          # A draft is invisible to users and creates no tag. The target is the
+          # exact commit that was built, not "main", which may have moved on.
+          gh release create "$VERSION" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --target "$SHA" \
+            --title "$VERSION" \
+            --notes-file notes/release-notes.md
+          id="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+                  --jq ".[] | select(.draft and .tag_name == \"$VERSION\") | .id" | head -n 1)"
+          [ -n "$id" ] || { echo "::error::The draft release was not found after creating it."; exit 1; }
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+      - name: Check the draft has every asset, complete
+        env:
+          RELEASE_ID: ${{ steps.draft.outputs.id }}
+        run: |
+          set -euo pipefail
+          uploaded="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '.assets[] | select(.state == "uploaded") | "\(.name) \(.size)"' | sort)"
+          expected="$(cd dist && for f in *; do echo "$f $(stat -c %s "$f")"; done | sort)"
+          if [ "$uploaded" != "$expected" ]; then
+            echo "::error::The draft's assets differ from the files that were built."
+            diff <(echo "$expected") <(echo "$uploaded") || true
+            exit 1
+          fi
+
+      - name: Publish
+        env:
+          RELEASE_ID: ${{ steps.draft.outputs.id }}
+        run: |
+          set -euo pipefail
+          # Last look: still no tag. Publishing creates it on $SHA.
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$VERSION" >/dev/null 2>&1; then
+            echo "::error::The tag $VERSION appeared. Not publishing."
+            exit 1
+          fi
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false -f make_latest=true >/dev/null
+
+      - name: Check what was published
+        run: |
+          set -euo pipefail
+          ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$VERSION" --jq '.object.type + " " + .object.sha')"
+          type="${ref% *}"; object="${ref#* }"
+          if [ "$type" = "tag" ]; then
+            object="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$object" --jq '.object.sha')"
+          fi
+          if [ "$object" != "$SHA" ]; then
+            echo "::error::The tag $VERSION points at $object, not at the built commit $SHA. Delete the release and the tag, then run the workflow again."
+            exit 1
+          fi
+          [ "$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)" = "$VERSION" ]
+          # The URLs the installer and the README use must work. A one-byte GET:
+          # the redirect target is signed for GET, so a HEAD request would fail.
+          probe() { curl -fsSL -r 0-0 -o /dev/null "$1"; }
+          for path in dist/*; do
+            probe "https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/${path##*/}"
+          done
+          probe "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/$INSTALL_ASSET"
+          probe "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/$UNINSTALL_ASSET"
+          echo "Published $VERSION at commit $SHA." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove the draft if anything before publishing failed
+        if: failure() && steps.draft.outputs.id != ''
+        env:
+          RELEASE_ID: ${{ steps.draft.outputs.id }}
+        run: |
+          # Only a draft: if it was already published, leave it for a human.
+          if [ "$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq .draft 2>/dev/null)" = "true" ]; then
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID"
+            echo "Removed the unfinished draft release."
+          fi

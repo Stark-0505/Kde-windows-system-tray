@@ -522,7 +522,7 @@ void StatusNotifierItemSource::overlayIcon(QIcon *icon, QIcon *overlay)
     *icon = tmp;
 }
 
-void StatusNotifierItemSource::activate(int x, int y)
+bool StatusNotifierItemSource::activate(int x, int y)
 {
     if (m_statusNotifierItemInterface && m_statusNotifierItemInterface->isValid()) {
         QDBusMessage message = QDBusMessage::createMethodCall(m_statusNotifierItemInterface->service(),
@@ -534,7 +534,9 @@ void StatusNotifierItemSource::activate(int x, int y)
         QDBusPendingCall call = m_statusNotifierItemInterface->connection().asyncCall(message);
         auto *watcher = new QDBusPendingCallWatcher(call, this);
         connect(watcher, &QDBusPendingCallWatcher::finished, this, &StatusNotifierItemSource::activateCallback);
+        return true;
     }
+    return false;
 }
 
 void StatusNotifierItemSource::activateCallback(QDBusPendingCallWatcher *call)
@@ -558,16 +560,18 @@ void StatusNotifierItemSource::scroll(int delta, const QString &direction)
     }
 }
 
-void StatusNotifierItemSource::contextMenu(int x, int y)
+bool StatusNotifierItemSource::contextMenu(int x, int y)
 {
     if (m_menuImporter) {
         m_menuImporter->updateMenu();
+        return true;
     } else {
         qCWarning(SYSTEM_TRAY) << "Could not find DBusMenu interface, falling back to calling ContextMenu()";
         if (m_statusNotifierItemInterface && m_statusNotifierItemInterface->isValid()) {
             m_statusNotifierItemInterface->call(QDBus::NoBlock, QStringLiteral("ContextMenu"), x, y);
         }
     }
+    return false;
 }
 
 void StatusNotifierItemSource::provideXdgActivationToken(const QString &token)

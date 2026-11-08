@@ -1,85 +1,93 @@
 #!/bin/bash
 # ──────────────────────────────────────────────────────────────────────────
-#  Windows Modern System Tray — uninstaller
+#  Windows Modern System Tray: uninstaller
 #
-#  Restores the stock KDE System Tray and your previous icon theme, then
-#  removes the Windows Modern plugin and icon theme files.
+#  Puts the stock KDE System Tray back on your panel, restores the icon theme
+#  you used before, and removes the plugin and icon theme this project
+#  installed. Nothing else is touched.
 #
 #  Usage:
 #      curl -fsSL https://github.com/Stark-0505/Kde-windows-system-tray/releases/latest/download/uninstall.sh | bash
 #
-#  Safe to run more than once.
+#  Safe to run more than once. If a step fails, the install record is kept so
+#  you can run it again.
 # ──────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
+# Must match scripts/install.sh (tests/release_contract.test.sh checks this).
 APP_ID="org.kde.windowsmodern.systemtray"
 THEME_NAME="WindowsModern-WhiteSurApps"
 STOCK_PLUGIN="org.kde.plasma.systemtray"
 
-STATE_DIR="$HOME/.local/share/windowsmodern-systemtray"
-STATE_FILE="$STATE_DIR/state"
-ICON_DEST="$HOME/.local/share/icons/${THEME_NAME}"
-
-BOLD="\033[1m"; GREEN="\033[32m"; YELLOW="\033[33m"; RED="\033[31m"; RESET="\033[0m"
-info()  { echo -e "${GREEN}==>${RESET} ${BOLD}$*${RESET}"; }
-warn()  { echo -e "${YELLOW}==>${RESET} $*"; }
-err()   { echo -e "${RED}==>${RESET} $*"; }
-die()   { err "$*"; exit 1; }
-
-if [ "${EUID:-$(id -u)}" -eq 0 ]; then
-    die "Don't run this as root. It will ask for your password (via pkexec) only for the one step that needs it."
+if [ -t 1 ]; then
+    BOLD=$'\033[1m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RED=$'\033[31m'; RESET=$'\033[0m'
+else
+    BOLD=""; GREEN=""; YELLOW=""; RED=""; RESET=""
 fi
-command -v pkexec &>/dev/null || die "pkexec not found (part of polkit). It's required to remove the system-installed plugin."
+info() { echo "${GREEN}==>${RESET} ${BOLD}$*${RESET}"; }
+warn() { echo "${YELLOW}==>${RESET} $*" >&2; }
+err()  { echo "${RED}==>${RESET} $*" >&2; }
+die()  { err "$*"; exit 1; }
 
-QDBUS=""
-for _c in qdbus6 qdbus; do
-    if command -v "$_c" &>/dev/null; then QDBUS="$_c"; break; fi
-done
-[ -n "$QDBUS" ] || warn "Neither qdbus6 nor qdbus found — the panel can't be restored automatically. Proceeding with a best-effort removal."
+# kv_get FILE KEY: value of the first KEY=value line, without any quotes.
+kv_get() {
+    [ -f "$1" ] || return 0
+    awk -F= -v key="$2" '
+        $1 == key { value = $0; sub(/^[^=]*=/, "", value); gsub(/^"|"$/, "", value); print value; exit }
+    ' "$1"
+}
 
-# Runs a Plasma Desktop Scripting snippet against the live Plasma Shell via
-# org.kde.PlasmaShell.evaluateScript, instead of editing
-# plasma-org.kde.plasma.desktop-appletsrc directly while plasmashell has it
-# open. print() calls inside the script become this function's stdout.
+detect_paths() {
+    QT_PLUGIN_DIR=""
+    if command -v pkg-config >/dev/null 2>&1; then
+        QT_PLUGIN_DIR="$(pkg-config --variable=plugindir Qt6Core 2>/dev/null || true)"
+    fi
+    if [ -z "$QT_PLUGIN_DIR" ]; then
+        if [ -d /usr/lib64/qt6/plugins ]; then QT_PLUGIN_DIR=/usr/lib64/qt6/plugins
+        elif [ -d /usr/lib/qt6/plugins ]; then QT_PLUGIN_DIR=/usr/lib/qt6/plugins
+        else QT_PLUGIN_DIR=/usr/lib64/qt6/plugins
+        fi
+    fi
+    [[ "$QT_PLUGIN_DIR" == /* ]] || die "Unexpected Qt plugin directory: ${QT_PLUGIN_DIR}"
+    PLUGIN_DST="$QT_PLUGIN_DIR/plasma/applets/${APP_ID}.so"
+    KPACKAGE_DIR="/usr/share/plasma/plasmoids/${APP_ID}"
+
+    DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+    ICON_DEST="$DATA_HOME/icons/${THEME_NAME}"
+    STATE_DIR="$DATA_HOME/windowsmodern-systemtray"
+    STATE_FILE="$STATE_DIR/state"
+    USER_COPIES=("$DATA_HOME/plasma/plasmoids/${APP_ID}"
+                 "$HOME/.local/lib64/qt6/plugins/plasma/applets/${APP_ID}.so"
+                 "$HOME/.local/lib/qt6/plugins/plasma/applets/${APP_ID}.so")
+}
+
+# plasma_eval SCRIPT: run a Plasma Desktop Scripting snippet in the live shell,
+# so Plasma writes its own config. print() output becomes our stdout.
 plasma_eval() {
     "$QDBUS" org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$1"
 }
 
-PREVIOUS_ICON_THEME=""
-if [ -f "$STATE_FILE" ]; then
-    # shellcheck disable=SC1090
-    source "$STATE_FILE"
-    if [ -n "${APPLETSRC_BACKUP:-}" ] && [ -f "$APPLETSRC_BACKUP" ]; then
-        info "A pre-install panel-layout backup is also available at: ${APPLETSRC_BACKUP}"
-    fi
-else
-    warn "No installer state found at ${STATE_FILE}."
-    warn "Proceeding with a best-effort removal — your previous icon theme can't be restored automatically."
-fi
+plasma_running() {
+    [ -n "$QDBUS" ] && "$QDBUS" org.kde.plasmashell >/dev/null 2>&1
+}
 
-# ── Detect install paths (same logic as install.sh / dev.sh) ─────────────
-if command -v pkg-config &>/dev/null; then
-    QT_PLUGIN_DIR="$(pkg-config --variable=plugindir Qt6Core 2>/dev/null || true)"
-fi
-if [ -z "${QT_PLUGIN_DIR:-}" ]; then
-    if [ -d /usr/lib64/qt6/plugins ]; then
-        QT_PLUGIN_DIR=/usr/lib64/qt6/plugins
-    elif [ -d /usr/lib/qt6/plugins ]; then
-        QT_PLUGIN_DIR=/usr/lib/qt6/plugins
+restart_plasmashell() {
+    info "Restarting plasmashell..."
+    if systemctl --user is-active plasma-plasmashell.service >/dev/null 2>&1; then
+        systemctl --user restart plasma-plasmashell.service
     else
-        QT_PLUGIN_DIR=/usr/lib64/qt6/plugins
+        kquitapp6 plasmashell 2>/dev/null || true
+        sleep 1
+        nohup plasmashell --replace >/dev/null 2>&1 </dev/null &
+        disown
     fi
-fi
-PLUGIN_DST="$QT_PLUGIN_DIR/plasma/applets/${APP_ID}.so"
-KPACKAGE_DIR="/usr/share/plasma/plasmoids/${APP_ID}"
+}
 
-# ── Panel: restore stock System Tray in place, live, via Plasma's own ──
-#    scripting API (org.kde.PlasmaShell.evaluateScript) — mirrors
-#    install.sh, and does NOT edit plasma-org.kde.plasma.desktop-appletsrc
-#    directly. Widget.index preserves panel position.
-PANEL_STATUS="unchanged"
-if [ -n "$QDBUS" ]; then
-    PANEL_SCRIPT=$(cat <<JS
+# restore_panel: stock System Tray back where ours is, same position.
+# Sets PANEL_STATUS. Returns 1 only when Plasma refused and ours is still there.
+restore_panel() {
+    local script result
+    script=$(cat <<JS
 var stockId = "${STOCK_PLUGIN}";
 var newId = "${APP_ID}";
 var allPanels = panels();
@@ -116,99 +124,164 @@ if (failed > 0) {
 }
 JS
 )
-    PANEL_RESULT="$(plasma_eval "$PANEL_SCRIPT" 2>&1)" || PANEL_RESULT="EVAL_FAILED:$PANEL_RESULT"
-
-    case "$PANEL_RESULT" in
+    result="$(plasma_eval "$script" 2>&1)" || result="EVAL_FAILED:$result"
+    case "$result" in
         RESTORED:*)
             PANEL_STATUS="restored"
             info "Restored the stock System Tray on your panel (same position)." ;;
         RESTORE_FAILED:*)
             PANEL_STATUS="restore-failed"
-            warn "Plasma refused to add the stock System Tray; the Windows Modern one was left in place."
-            warn "Add the stock System Tray manually, then re-run this uninstaller." ;;
+            err "Plasma refused to add the stock System Tray; the Windows Modern one was left in place."
+            err "Add the stock System Tray yourself (right-click the panel, Add or Manage Widgets), then run this again."
+            return 1 ;;
         ALREADY_STOCK)
             PANEL_STATUS="already-stock"
-            info "Stock System Tray is already on your panel." ;;
+            info "The stock System Tray is already on your panel." ;;
         NOT_FOUND)
             PANEL_STATUS="not-found"
-            warn "Neither System Tray variant was found on any panel — leaving panel layout untouched." ;;
+            warn "Neither System Tray variant was found on any panel; the layout was left alone." ;;
         *)
             PANEL_STATUS="script-failed"
-            warn "Plasma scripting call did not complete as expected: ${PANEL_RESULT}"
-            warn "Add the stock System Tray to your panel manually if needed." ;;
+            warn "The Plasma scripting call did not finish as expected: ${result}"
+            warn "Add the stock System Tray to your panel yourself if it is missing." ;;
     esac
-else
-    warn "Skipping automatic panel restore (no qdbus) — add the stock System Tray manually if needed."
-fi
+}
 
-# ── Remove plugin (needs root) ─────────────────────────────────────────
-info "Removing plugin (requires your password)..."
-# No temp script: the commands are fixed, so pass the paths as arguments to
-# an inline script (nothing root executes lives in a user-writable location).
-pkexec bash -c 'set -euo pipefail; rm -f -- "${1:?}"; rm -rf -- "${2:?}"' _ "$PLUGIN_DST" "$KPACKAGE_DIR" \
-    || warn "Could not remove the system plugin file (continuing)."
+# restore_icon_theme: only when ours is still the active one. If you picked
+# another theme since, that choice stays.
+restore_icon_theme() {
+    local current previous recorded
+    previous="$(kv_get "$STATE_FILE" PREVIOUS_ICON_THEME)"
+    recorded="$(kv_get "$STATE_FILE" ICON_THEME_RECORDED)"
+    current="$(kreadconfig6 --file kdeglobals --group Icons --key Theme 2>/dev/null || true)"
 
-rm -rf "$HOME/.local/share/plasma/plasmoids/${APP_ID}" 2>/dev/null || true
-rm -f "$HOME/.local/lib64/qt6/plugins/plasma/applets/${APP_ID}.so" 2>/dev/null || true
-rm -f "$HOME/.local/lib/qt6/plugins/plasma/applets/${APP_ID}.so" 2>/dev/null || true
-info "Plugin removed."
+    if [ "$current" != "$THEME_NAME" ]; then
+        [ -z "$current" ] || info "Icon theme is ${current}, not ours; leaving it as it is."
+        return 0
+    fi
+    # Either the theme from before the install, or (nothing recorded, or the
+    # default was in use) Breeze, so the theme being deleted isn't left active.
+    if [ "$recorded" != "1" ] || [ -z "$previous" ]; then
+        previous="breeze"
+    fi
+    if command -v plasma-changeicons >/dev/null 2>&1; then
+        plasma-changeicons "$previous" || { warn "Could not restore the icon theme. Pick ${previous} in System Settings, Colors & Themes, Icons."; return 0; }
+    else
+        kwriteconfig6 --file kdeglobals --group Icons --key Theme "$previous" \
+            || { warn "Could not restore the icon theme. Pick ${previous} in System Settings, Colors & Themes, Icons."; return 0; }
+    fi
+    info "Restored the icon theme: ${previous}."
+}
 
-# ── Icon theme: remove + restore previous theme ────────────────────────
-if [ -d "$ICON_DEST" ]; then
-    rm -rf "$ICON_DEST"
-    info "Removed icon theme at ${ICON_DEST}."
-fi
+remove_plugin() {
+    local path
+    if [ -e "$PLUGIN_DST" ] || [ -e "$KPACKAGE_DIR" ]; then
+        info "Removing the plugin (this asks for your password)..."
+        # Fixed commands with the paths as arguments, so nothing root runs
+        # lives in a place you can write to.
+        # shellcheck disable=SC2016  # the script is meant to be expanded by root's bash, not ours
+        if ! pkexec bash -c 'set -euo pipefail
+            case "${1:?}" in */plasma/applets/*.so) ;; *) exit 1 ;; esac
+            case "${2:?}" in /usr/share/plasma/plasmoids/?*) ;; *) exit 1 ;; esac
+            rm -f -- "$1"; rm -rf -- "$2"' _ "$PLUGIN_DST" "$KPACKAGE_DIR"; then
+            err "The plugin was not removed (password prompt cancelled?). Run this again to finish."
+            return 1
+        fi
+        REMOVED_SOMETHING=1
+    fi
+    for path in "${USER_COPIES[@]}"; do
+        if [ -e "$path" ]; then rm -rf -- "$path"; REMOVED_SOMETHING=1; fi
+    done
+}
 
-if [ -n "$PREVIOUS_ICON_THEME" ]; then
-    if command -v plasma-changeicons &>/dev/null; then
-        if plasma-changeicons "$PREVIOUS_ICON_THEME"; then
-            info "Restored previous icon theme: ${PREVIOUS_ICON_THEME}."
-        else
-            warn "Could not restore the previous icon theme automatically. Set it via System Settings → Colors & Themes → Icons."
+# anything_installed: any trace of this project on disk or in the settings.
+anything_installed() {
+    local path
+    for path in "$PLUGIN_DST" "$KPACKAGE_DIR" "$ICON_DEST" "${USER_COPIES[@]}"; do
+        [ ! -e "$path" ] || return 0
+    done
+    [ "$(kreadconfig6 --file kdeglobals --group Icons --key Theme 2>/dev/null || true)" = "$THEME_NAME" ]
+}
+
+main() {
+    if [ "${EUID:-$(id -u)}" -eq 0 ]; then
+        die "Don't run this as root. It asks for your password (pkexec) only for the step that needs it."
+    fi
+    command -v pkexec >/dev/null 2>&1 || die "pkexec (polkit) not found. It's needed to remove the system-installed plugin."
+    command -v kreadconfig6 >/dev/null 2>&1 || die "'kreadconfig6' is required but not found."
+
+    QDBUS=""
+    local cmd
+    for cmd in qdbus6 qdbus; do
+        if command -v "$cmd" >/dev/null 2>&1; then QDBUS="$cmd"; break; fi
+    done
+
+    detect_paths
+    PANEL_STATUS="unchanged"
+    REMOVED_SOMETHING=0
+    local failed=0 had_state=0 backup
+    [ ! -f "$STATE_FILE" ] || had_state=1
+
+    # Panel first, while the plugin still exists: a panel that points at a
+    # missing plugin shows an error widget.
+    if plasma_running; then
+        restore_panel || die "Nothing was removed."
+    else
+        PANEL_STATUS="plasma-not-running"
+        warn "Plasma isn't running here, so the panel can't be restored automatically."
+    fi
+
+    # Nothing of ours anywhere: say so, and don't prompt or restart anything.
+    if [ "$had_state" -eq 0 ] && [ "$PANEL_STATUS" != "restored" ] && ! anything_installed; then
+        info "Windows Modern System Tray is not installed. Nothing to do."
+        return 0
+    fi
+
+    if [ "$had_state" -eq 1 ]; then
+        backup="$(kv_get "$STATE_FILE" APPLETSRC_BACKUP)"
+        if [ -n "$backup" ] && [ -f "$backup" ]; then
+            info "A panel layout backup from before the install is at: ${backup}"
         fi
     else
-        if kwriteconfig6 --file kdeglobals --group Icons --key Theme "$PREVIOUS_ICON_THEME" 2>/dev/null; then
-            info "Restored previous icon theme: ${PREVIOUS_ICON_THEME}."
-        else
-            warn "Could not restore the previous icon theme automatically."
-        fi
+        warn "No install record found. Removing what is there; your previous icon theme can't be looked up."
     fi
-else
-    warn "No previous icon theme on record — leaving the active icon theme as-is."
-fi
 
-# ── Restart plasmashell ────────────────────────────────────────────────
-info "Restarting plasmashell..."
-if systemctl --user is-active plasma-plasmashell.service &>/dev/null; then
-    systemctl --user restart plasma-plasmashell.service
-else
-    kquitapp6 plasmashell 2>/dev/null || killall plasmashell 2>/dev/null || true
-    sleep 1
-    nohup plasmashell --replace >/dev/null 2>&1 &
-    disown
-fi
-sleep 3
+    restore_icon_theme
+    remove_plugin || failed=1
+    if [ -d "$ICON_DEST" ]; then
+        rm -rf -- "$ICON_DEST"
+        REMOVED_SOMETHING=1
+        info "Removed the icon theme at ${ICON_DEST}."
+    fi
 
-# ── Verify ──────────────────────────────────────────────────────────────
-info "Verifying removal..."
-if [ -f "$PLUGIN_DST" ]; then
-    echo -e "  ${RED}✗${RESET} Plugin still present at ${PLUGIN_DST}"
-else
-    echo -e "  ${GREEN}✓${RESET} Plugin removed"
-fi
-if [ -d "$ICON_DEST" ]; then
-    echo -e "  ${RED}✗${RESET} Icon theme still present at ${ICON_DEST}"
-else
-    echo -e "  ${GREEN}✓${RESET} Icon theme removed"
-fi
-case "$PANEL_STATUS" in
-    restored|already-stock)
-        echo -e "  ${GREEN}✓${RESET} Stock System Tray is on your panel" ;;
-    *)
-        echo -e "  ${YELLOW}!${RESET} Panel not confirmed — add the stock System Tray manually if needed" ;;
-esac
+    if [ "$REMOVED_SOMETHING" -eq 1 ] || [ "$PANEL_STATUS" = "restored" ]; then
+        if plasma_running; then restart_plasmashell; fi
+    fi
 
-rm -rf "$STATE_DIR"
+    info "Verifying the removal..."
+    if [ -e "$PLUGIN_DST" ]; then
+        echo "  ${RED}✗${RESET} Plugin still present at ${PLUGIN_DST}"; failed=1
+    else
+        echo "  ${GREEN}✓${RESET} Plugin removed"
+    fi
+    if [ -e "$ICON_DEST" ]; then
+        echo "  ${RED}✗${RESET} Icon theme still present at ${ICON_DEST}"; failed=1
+    else
+        echo "  ${GREEN}✓${RESET} Icon theme removed"
+    fi
+    case "$PANEL_STATUS" in
+        restored|already-stock) echo "  ${GREEN}✓${RESET} Stock System Tray is on your panel" ;;
+        *) echo "  ${YELLOW}!${RESET} Panel not confirmed, add the stock System Tray yourself if needed" ;;
+    esac
 
-echo ""
-info "Done. Windows Modern System Tray has been uninstalled."
+    echo ""
+    if [ "$failed" -ne 0 ]; then
+        err "The uninstall did not finish. The install record was kept; run this again."
+        exit 1
+    fi
+    rm -rf -- "$STATE_DIR"
+    info "Done. Windows Modern System Tray has been uninstalled."
+}
+
+# Called last, so a truncated download never runs a half-read script.
+main "$@"

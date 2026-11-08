@@ -24,10 +24,11 @@ public:
     StatusNotifierItemSource(const QString &service, QObject *parent);
     ~StatusNotifierItemSource() override;
 
-    void activate(int x, int y);
+    // Return true when a request went out and a result signal will follow.
+    bool activate(int x, int y);
     void secondaryActivate(int x, int y);
     void scroll(int delta, const QString &direction);
-    void contextMenu(int x, int y);
+    bool contextMenu(int x, int y);
     void provideXdgActivationToken(const QString &token);
 
     QIcon attentionIcon() const;
@@ -88,7 +89,7 @@ private:
     QString m_iconThemePath;
     QString m_id;
     QString m_processName;
-    bool m_itemIsMenu;
+    bool m_itemIsMenu = false;
     QString m_overlayIconName;
     QString m_status;
     QString m_title;

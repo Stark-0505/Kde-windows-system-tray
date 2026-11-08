@@ -70,7 +70,11 @@ else
 fi
 
 # 5. Symbols
-if [ -f "$SO_PATH" ]; then
+if [ -f "$SO_PATH" ] && ! command -v nm >/dev/null 2>&1; then
+    # binutils is not installed by default on Fedora KDE. Without nm both
+    # symbols would be reported as undefined, which is a false failure.
+    echo "  (skipping the symbol check: 'nm' from binutils is not installed)"
+elif [ -f "$SO_PATH" ]; then
     # Capture first, then grep: `nm | grep -q` under pipefail gives false
     # negatives (grep exits early, nm gets SIGPIPE, pipeline reports failure).
     SO_SYMBOLS="$(nm -D "$SO_PATH" 2>/dev/null || true)"

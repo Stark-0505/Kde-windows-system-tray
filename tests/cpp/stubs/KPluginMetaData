@@ -1,0 +1,26 @@
+// Stand-in for KPluginMetaData: an id plus one metadata value.
+#pragma once
+#include <QString>
+#include <QStringView>
+
+class KPluginMetaData
+{
+public:
+    KPluginMetaData(const QString &id, const QString &dbusService)
+        : m_id(id)
+        , m_dbusService(dbusService)
+    {
+    }
+    QString pluginId() const
+    {
+        return m_id;
+    }
+    QString value(QStringView) const
+    {
+        return m_dbusService;
+    }
+
+private:
+    QString m_id;
+    QString m_dbusService;
+};
