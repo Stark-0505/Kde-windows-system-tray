@@ -4,7 +4,7 @@
 # and its embedded QML resources.
 
 Name:           kde-windows-system-tray
-Version:        1.0.0
+Version:        1.2.0
 Release:        1%{?dist}
 Summary:        Windows 11–style System Tray plasmoid for KDE Plasma 6
 
@@ -73,6 +73,9 @@ flyout, and background app management.
 %{_qt6_plugindir}/plasma/applets/org.kde.windowsmodern.systemtray.so
 
 %changelog
+* Mon Nov 09 2026 Repository Maintenance Bot <repository-maintenance@localhost> - 1.2.0-1
+- Align package metadata with the 1.2.0 release.
+
 * Sun Nov 01 2026 Repository Maintenance Bot <repository-maintenance@localhost> - 1.0.0-1
 - Package the applet for Plasma 6.8.2 and newer.
 - Require the Qt and KDE Frameworks versions used by Plasma 6.8.
